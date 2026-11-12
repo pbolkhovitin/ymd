@@ -308,3 +308,21 @@ CLI: `ymd download <id> [--quality]`, `ymd cache list|path|remove|info`.
 Тонкость: одиночный `POST …/feedback` не отвечает (соединение закрывается),
 используется только множественный `/feedbacks` с `{"feedback":[…]}`.
 Подробности — `notes/m4-findings.md`.
+
+## Тексты песен (разведка, код не начат)
+
+`GET /tracks/{id}/lyrics?format=TEXT|LRC|RICH_JSON&timeStamp=…&sign=…`
+
+Подпись **не такая**, как у `file-info`: ключ `kzqU4XhfCaY6B6JTHODeq5` (windows),
+данные `trackId + timeStamp` без разделителя, base64 без обрезки последнего символа.
+Любая другая комбинация даёт `403 Invalid Sign`.
+
+Ответ содержит не текст, а `downloadUrl` (presigned S3) плюс `lyricId`,
+`externalLyricId`, `writers`, `major` (например Musixmatch). Сам текст забирается
+вторым GET без авторизации; `LRC` — строки вида `[00:19.67] …`, `TEXT` — без таймкодов.
+
+План реализации: `api::lyrics()` (подпись + второй GET), `GET /v1/lyrics?id=`
+в демоне (кэш текста в `cache`), `ymd lyrics <id>`, кнопка «Текст» в панели с
+подсветкой текущей строки по `positionMs`.
+
+Детали и матрица проверок — `notes/lyrics-findings.md`.

@@ -70,13 +70,19 @@ bash scripts/dev-install.sh        # плагин в Noctalia (drop-in)
 
 ## Статус
 
+Репозиторий: https://github.com/pbolkhovitin/ym-noctalia (private).
+
 | Что | Состояние |
 |---|---|
 | Концепт и документация | готово |
-| Демон `ymd` (HTTP+SSE, CLI `status`/`ctl`/`doctor`) | скелет, собирается |
-| Плагин (bar, probe, bridge, panel) | скелет |
-| GStreamer, MPRIS, API Яндекса | M1 |
-| P0-спайки | S1–S5 ✅, S6/S7/S8 частично, S9 заблокирован (client_id) |
+| P0-спайки | S1–S8 ✅; S9 заменён импортом токена |
+| Демон `ymd` | работает: API, поток, плеер, MPRIS, кэш, волна |
+| Плагин | бар (иконка + трек), панель (поиск/очередь/режимы), bridge, probe |
+| M1 — поиск и воспроизведение | ✅ (`ymd search`, `ymd stream`) |
+| M2 — плеер + исходящий MPRIS | ✅ (`playerctl --player=ymd`) |
+| M3 — офлайн-кэш | ✅ (`ymd download`, `download-album`, лимит + LRU) |
+| M4 — «Моя волна» | ✅ (`ymd wave`, автодогрузка) |
+| Тексты песен | разведка API выполнена, код не начат (`notes/lyrics-findings.md`) |
 | Палитра (факт `getColor`) | `primary #C4B28A` на текущей теме |
 
 ## Окружение (проверено на хосте)
@@ -86,7 +92,9 @@ bash scripts/dev-install.sh        # плагин в Noctalia (drop-in)
 - В баре уже стоит виджет `media` (встроенный MPRIS).
 - Палитра: берётся из `noctalia.getColor(role)`; фактическое значение на
   2026-11-12 — `primary #C4B28A` (тема меняется, хардкод запрещён).
-- GStreamer/GTK dev-пакеты **не установлены** (понадобятся в M1).
+- GStreamer dev-пакеты установлены (`gstreamer-1.0` 1.28.9), `libsecret` есть.
+- Noctalia **v5.4.1**, niri 26.04; бар — топ, `thickness = 34`.
+- Виджет бара подключён как `[widget.ym] type = "pbolkhovitin/yandex-music:bar"`.
 
 ## Связанные материалы
 
