@@ -74,9 +74,10 @@ M2 готов: собственный плеер (GStreamer `playbin3` → PipeW
 Обложки: `ui.image` принимает только локальный `path`, файл качается в
 `pluginDataDir()`; в баре — `barWidget.setImage`.
 
-M3 (базово) готов: `ymd download`, `ymd cache list/path/remove/info`,
-локальный файл играет через `file://` без сети. Дальше: лимит кэша + LRU,
-докачка после обрыва, отметка «скачано» в поиске.
+M3 готов: `ymd download`, `ymd download-album`, `ymd cache list/path/remove/info`,
+лимит + LRU (`[cache] limit_mb`), `cached` в `/v1/search` и `✓` в панели.
+Локальный файл играет через `file://` без сети.
+Дальше: докачка после обрыва, тексты песен, «Моя волна» (M4).
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.

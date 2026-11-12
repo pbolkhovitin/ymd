@@ -191,6 +191,7 @@ fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
                 "durationMs": duration_ms,
                 "liked": false,
                 "cover": cover,
+                "cached": crate::cache::is_cached(&id),
             }))
         })
         .collect()

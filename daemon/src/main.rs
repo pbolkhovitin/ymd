@@ -72,6 +72,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Скачать весь альбом в офлайн-кэш.
+    DownloadAlbum {
+        id: u64,
+        #[arg(long, default_value = "nq")]
+        quality: String,
+    },
     /// Офлайн-кэш: список, удаление, путь.
     Cache {
         #[command(subcommand)]
@@ -172,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Auth { cmd } => auth_cmd(cmd).await,
         Command::Search { text, page, json } => search_cmd(&text, page, json).await,
         Command::Download { id, quality, json } => download_cmd(id, &quality, json).await,
+        Command::DownloadAlbum { id, quality } => download_album_cmd(id, &quality).await,
         Command::Cache { cmd } => {
             match cmd {
                 CacheCommand::List => cache_list(),
@@ -288,6 +295,66 @@ async fn download_cmd(
     Ok(())
 }
 
+async fn download_album_cmd(id: u64, quality: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let quality = api::Quality::parse(quality).ok_or("качество: lossless | hq | nq")?;
+    let client = api::Client::from_store()?;
+    let value = client.album(&id.to_string()).await?;
+
+    let title = value
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<без названия>");
+    let mut tracks: Vec<state::Track> = Vec::new();
+
+    if let Some(volumes) = value.get("volumes").and_then(|v| v.as_array()) {
+        for volume in volumes {
+            if let Some(items) = volume.as_array() {
+                for item in items {
+                    if let Ok(track) = state::track_from_value(item) {
+                        tracks.push(track);
+                    }
+                }
+            }
+        }
+    }
+
+    if tracks.is_empty() {
+        return Err("в альбоме не нашлось треков".into());
+    }
+
+    println!("альбом: {title} — {} треков", tracks.len());
+    let mut failed = 0usize;
+
+    for (index, track) in tracks.iter().enumerate() {
+        if cache::path_for(&track.id).is_some() {
+            println!("[{}/{}] уже скачан: {} — {}", index + 1, tracks.len(), track.title, track.artist_line());
+            continue;
+        }
+        match cache::download(&client, track, quality, |_, _| {}).await {
+            Ok(entry) => println!(
+                "[{}/{}] ok {} — {} ({:.1} МиБ)",
+                index + 1,
+                tracks.len(),
+                entry.title,
+                entry.artists.join(", "),
+                entry.bytes as f64 / 1048576.0
+            ),
+            Err(err) => {
+                failed += 1;
+                eprintln!("[{}/{}] ошибка {}: {err}", index + 1, tracks.len(), track.title);
+            }
+        }
+    }
+
+    println!(
+        "итого: готово {}, ошибок {}, занято {:.1} МиБ",
+        tracks.len() - failed,
+        failed,
+        cache::total_bytes() as f64 / 1048576.0
+    );
+    Ok(())
+}
+
 fn cache_list() {
     let items = cache::list();
     if items.is_empty() {
@@ -330,9 +397,10 @@ fn cache_info() {
     println!("каталог: {}", cache::dir().display());
     println!("индекс:  {}", cache::index_path().display());
     println!(
-        "занято:  {:.1} МиБ в {} треках",
+        "занято:  {:.1} МиБ в {} треках (лимит {:.0} МиБ)",
         cache::total_bytes() as f64 / 1048576.0,
-        cache::list().len()
+        cache::list().len(),
+        cache::limit_bytes() as f64 / 1048576.0
     );
 }
 

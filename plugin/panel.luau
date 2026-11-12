@@ -72,12 +72,19 @@ local function short(text, limit)
   return value
 end
 
+local function cached_mark(item)
+  return item.cached and "✓ " or ""
+end
+
 local function track_line(item)
+  local prefix = item.cached and "✓ " or ""
+  -- префикс съедает два символа из бюджета строки
+  local budget = item.cached and 44 or 46
   local artist = (item.artists and item.artists[1]) or ""
   if artist ~= "" then
-    return short(item.title, 28) .. " · " .. short(artist, 18)
+    return prefix .. short(item.title, budget - 20) .. " · " .. short(artist, 18)
   end
-  return short(item.title, 46)
+  return prefix .. short(item.title, budget)
 end
 
 local function header()

@@ -94,6 +94,79 @@ pub fn remove(track_id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Лимит кэша из `~/.config/ymd/config.toml` (`[cache] limit_mb = 2048`).
+pub fn limit_bytes() -> u64 {
+    let path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ymd")
+        .join("config.toml");
+
+    #[derive(serde::Deserialize, Default)]
+    struct Cache {
+        #[serde(default = "default_limit_mb")]
+        limit_mb: u64,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Config {
+        #[serde(default)]
+        cache: Option<Cache>,
+    }
+    fn default_limit_mb() -> u64 {
+        2048
+    }
+
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| toml::from_str::<Config>(&text).ok())
+        .and_then(|config| config.cache)
+        .map(|cache| cache.limit_mb)
+        .unwrap_or_else(default_limit_mb)
+        * 1024
+        * 1024
+}
+
+/// Удаляет самые старые записи, пока суммарный размер не влезет в лимит.
+/// `keep` — трек, который только что скачали и удалять его нельзя.
+pub fn enforce_limit(keep: &str) -> Result<Vec<String>, String> {
+    let limit = limit_bytes();
+    let mut index = load_index();
+    let mut removed = Vec::new();
+
+    let mut total: u64 = index.items.values().map(|e| e.bytes).sum();
+    if total <= limit {
+        return Ok(removed);
+    }
+
+    let mut order: Vec<(String, u64)> = index
+        .items
+        .values()
+        .map(|e| (e.id.clone(), e.at))
+        .collect();
+    order.sort_by_key(|(_, at)| *at);
+
+    for (id, _) in order {
+        if total <= limit {
+            break;
+        }
+        if id == keep {
+            continue;
+        }
+        if let Some(entry) = index.items.remove(&id) {
+            let _ = fs::remove_file(dir().join(&entry.file));
+            total = total.saturating_sub(entry.bytes);
+            removed.push(id);
+        }
+    }
+
+    save_index(&index)?;
+    Ok(removed)
+}
+
+/// Есть ли трек в кэше.
+pub fn is_cached(track_id: &str) -> bool {
+    path_for(track_id).is_some()
+}
+
 pub fn total_bytes() -> u64 {
     load_index().items.values().map(|e| e.bytes).sum()
 }
@@ -217,6 +290,14 @@ pub async fn download(
     let mut index = load_index();
     index.items.insert(entry.id.clone(), entry.clone());
     save_index(&index)?;
+
+    match enforce_limit(&entry.id) {
+        Ok(removed) if !removed.is_empty() => {
+            tracing::info!(count = removed.len(), "cache evicted (LRU)")
+        }
+        Err(err) => tracing::warn!(error = %err, "cache limit not enforced"),
+        _ => {}
+    }
 
     tracing::info!(track = %entry.id, bytes = written, kind, "cached");
     Ok(entry)
