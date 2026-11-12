@@ -9,6 +9,7 @@ mod doctor;
 mod httpd;
 mod media;
 mod mpris;
+mod oauth;
 mod session;
 mod state;
 
@@ -90,6 +91,12 @@ enum AuthCommand {
         /// Только показать, что найдено, ничего не сохранять.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Войти через OAuth Device Flow (код в браузере, без копирования токена).
+    Login {
+        /// Не ждать подтверждения, только выдать код.
+        #[arg(long)]
+        no_wait: bool,
     },
     /// Показать, какой аккаунт привязан.
     Status,
@@ -239,6 +246,40 @@ async fn stream_cmd(
 
 async fn auth_cmd(cmd: AuthCommand) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
+        AuthCommand::Login { no_wait } => {
+            let code = oauth::request_device_code().await?;
+            println!("Откройте {} и введите код: {}", code.verification_url, code.user_code);
+            println!("(код действует {} мин)", code.expires_in / 60);
+
+            if no_wait {
+                println!("device_code: {}", code.device_code);
+                return Ok(());
+            }
+
+            println!("жду подтверждения…");
+            let token = match oauth::poll_token(&code).await? {
+                Some(token) => token,
+                None => {
+                    eprintln!("код истёк — запустите заново");
+                    std::process::exit(1);
+                }
+            };
+
+            println!("токен получен: {}", auth::mask(&token.access_token));
+            let account = auth::validate(&token.access_token).await?;
+            let saved = auth::save(&account, &token.access_token)?;
+            println!(
+                "вход выполнен: login={} uid={} plus={}",
+                saved.login, saved.uid, saved.has_plus
+            );
+            if let Some(expires_in) = token.expires_in {
+                println!("срок действия: ~{} дней", expires_in / 86_400);
+            }
+            if token.refresh_token.is_some() {
+                println!("refresh_token получен (не сохраняется)");
+            }
+            Ok(())
+        }
         AuthCommand::Import {
             from_official,
             token,
@@ -278,7 +319,7 @@ async fn auth_cmd(cmd: AuthCommand) -> Result<(), Box<dyn std::error::Error>> {
             match auth::load_account() {
                 None => {
                     println!("не авторизован");
-                    println!("import: ymd auth import --from-official");
+                    println!("вход: ymd auth login   (или import --from-official)");
                 }
                 Some(account) => {
                     println!("login   {}", account.login);

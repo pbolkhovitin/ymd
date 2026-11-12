@@ -81,3 +81,25 @@ Rust сериализовал `position_ms`, а плагин читал `positio
 панели не работал. Исправлено `#[serde(rename_all = "camelCase")]` на `State`,
 `Track`, `Queue`, `QueueItem`, `EnvState`, `UiState`. Тест
 `state_serializes_camel_case` фиксирует контракт.
+
+
+## РЕШЕНО: поток починен (2026-11-12)
+
+Причина `403` — несовпадение пары «заголовок клиента + ключ подписи».
+Подробный разбор и точные параметры — `notes/reference-yandex-music-api.md`.
+
+Коротко:
+
+- `/get-file-info` с `X-Yandex-Music-Client: YandexMusicDesktopAppWindows/5.95.0`
+  и ключом `kzqU4XhfCaY6B6JTHODeq5` → `200`, `result.downloadInfo.url` — CDN-ссылка
+  (`206` на Range, `ftypisom`).
+- качества: `lossless` → `flac-mp4`, `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
+- резервный путь `/download-info` требует ссылку вида
+  `/get-mp3/{md5(salt+path[1:]+s)}/{ts}{path}` — без неё был `401`.
+
+Реализовано в `daemon/src/api.rs` (`stream` → `file_info` с фоллбэком на
+`download_info_stream`), `daemon/src/media.rs` (`DESKTOP_CLIENT`,
+`DESKTOP_SIGN_KEY`, `SIGN_SALT`, `direct_link`, `FILE_INFO_CODECS`).
+
+Вход без токена из чужого Local Storage: `ymd auth login` (Device Flow,
+`daemon/src/oauth.rs`), проверено выдачи кода (`https://ya.ru/device`, код 8 символов).

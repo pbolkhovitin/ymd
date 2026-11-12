@@ -61,9 +61,12 @@ setColor/setGlyphColor/setFont/setVisible/clearTooltip/isVertical/outputName/ren
 `ui` — 21 метод, панель открывается, SSE и чтение ключа из `$XDG_RUNTIME_DIR` работают.
 
 M1 в работе: API-клиент, `ymd search/track/album/artist`, MPRIS-мост работают.
-Блокер: прямой поток Яндекса (`file-info` 403, `download-info` → 401) — см.
-`notes/m1-findings.md`. Дальше: панель с поиском/очередью, затем возврат к
-собственному плееру (GStreamer + исходящий MPRIS).
+Поток разблокирован: `/get-file-info` работает при совпадении пары
+«заголовок клиента + ключ» (см. `notes/reference-yandex-music-api.md`).
+Вход — `ymd auth login` (Device Flow). Панель с поиском и очередью готова.
+
+Дальше M2: собственный плеер (GStreamer `playbin3` → PipeWire), исходящий
+MPRIS, очередь из панели начинает играть без внешнего клиента.
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.

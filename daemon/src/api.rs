@@ -52,12 +52,21 @@ impl Client {
     }
 
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value, ApiError> {
+        self.get_with_client(path, query, CLIENT_HEADER).await
+    }
+
+    async fn get_with_client(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        client: &str,
+    ) -> Result<Value, ApiError> {
         let response = self
             .http
             .get(format!("{BASE_URL}{path}"))
             .query(query)
             .header("authorization", format!("OAuth {}", self.token))
-            .header("x-yandex-music-client", CLIENT_HEADER)
+            .header("x-yandex-music-client", client)
             .header("accept-language", "ru")
             .send()
             .await?;
@@ -124,11 +133,98 @@ impl Client {
 
     /// Прямой URL потока.
     ///
-    /// Используется `/tracks/{id}/download-info` (без подписи): он отдаёт
-    /// `downloadInfoUrl`, а тот — XML с `host`/`path`. Подписанный
-    /// `/resources/v2/file-info` для этого аккаунта отвечает `403 not-allowed`,
-    /// поэтому оставлен только для `encraw` (офлайн).
+    /// Основной путь — подписанный `/get-file-info` (как у официального клиента):
+    /// он отдаёт готовые CDN-ссылки `strm.yandex.net` и поддерживает lossless.
+    /// ВАЖНО: подпись и заголовок `X-Yandex-Music-Client` связаны парой —
+    /// `kzqU4XhfCaY6B6JTHODeq5` + `YandexMusicDesktopAppWindows/5.95.0`.
+    /// Любая другая комбинация даёт `403 not-allowed`.
+    ///
+    /// Резервный путь — `/tracks/{id}/download-info` + XML + md5-подпись
+    /// (`/get-mp3/{sign}/{ts}{path}`), только mp3/aac.
     pub async fn stream(&self, track_id: u64, quality: Quality) -> Result<Stream, ApiError> {
+        match self.file_info(track_id, quality).await {
+            Ok(stream) => Ok(stream),
+            Err(primary) => match self.download_info_stream(track_id, quality).await {
+                Ok(stream) => Ok(stream),
+                Err(_) => Err(primary),
+            },
+        }
+    }
+
+    /// `/get-file-info` — подписанный запрос за прямыми ссылками.
+    async fn file_info(&self, track_id: u64, quality: Quality) -> Result<Stream, ApiError> {
+        let ts = crate::media::now_ts();
+        let codecs = crate::media::FILE_INFO_CODECS;
+        // В подписи кодеки конкатенируются без разделителя, в query — через запятую.
+        let sign = crate::media::sign_file_info(
+            crate::media::DESKTOP_SIGN_KEY,
+            ts,
+            &[track_id],
+            quality.as_str(),
+            &codecs.concat(),
+            "raw",
+        );
+
+        let value = self
+            .get_with_client(
+                "/get-file-info",
+                &[
+                    ("ts", ts.to_string()),
+                    ("trackId", track_id.to_string()),
+                    ("quality", quality.as_str().to_string()),
+                    ("codecs", codecs.join(",")),
+                    ("transports", "raw".to_string()),
+                    ("sign", sign),
+                ],
+                crate::media::DESKTOP_CLIENT,
+            )
+            .await?;
+
+        let info = value
+            .get("result")
+            .and_then(|r| r.get("downloadInfo"))
+            .or_else(|| value.get("downloadInfo"))
+            .ok_or_else(|| ApiError::NoStream(track_id.to_string()))?;
+
+        let url = info
+            .get("url")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                info.get("urls")
+                    .and_then(Value::as_array)
+                    .and_then(|urls| urls.first())
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| ApiError::NoStream(track_id.to_string()))?;
+
+        Ok(Stream {
+            url,
+            transport: info
+                .get("transport")
+                .and_then(Value::as_str)
+                .unwrap_or("raw")
+                .to_string(),
+            key: info
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            codec: info
+                .get("codec")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            bitrate: info.get("bitrate").and_then(Value::as_u64),
+        })
+    }
+
+    /// `/tracks/{id}/download-info` + XML → подписанная ссылка `/get-mp3/...`.
+    async fn download_info_stream(
+        &self,
+        track_id: u64,
+        quality: Quality,
+    ) -> Result<Stream, ApiError> {
         let value = unwrap_result(
             self.get(&format!("/tracks/{track_id}/download-info"), &[])
                 .await?,
@@ -143,10 +239,13 @@ impl Client {
             .ok_or(ApiError::NoStream(track_id.to_string()))?;
 
         let xml = self.http.get(info_url).send().await?.text().await?;
-        let (host, path) = parse_download_info(&xml).ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let host = parse_tag(&xml, "host").ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let path = parse_tag(&xml, "path").ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let ts = parse_tag(&xml, "ts").ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let s = parse_tag(&xml, "s").unwrap_or_default();
 
         Ok(Stream {
-            url: format!("https://{host}{path}"),
+            url: crate::media::direct_link(&host, &path, &ts, &s),
             transport: "raw".to_string(),
             key: None,
             codec: entry
@@ -207,11 +306,12 @@ fn target_bitrate(quality: Quality) -> u64 {
 }
 
 /// `<download-info><host>…</host><path>…</path>…` → (host, path).
+#[allow(dead_code)] // используется в тестах
 pub fn parse_download_info(xml: &str) -> Option<(String, String)> {
-    Some((tag(xml, "host")?, tag(xml, "path")?))
+    Some((parse_tag(xml, "host")?, parse_tag(xml, "path")?))
 }
 
-fn tag(xml: &str, name: &str) -> Option<String> {
+pub fn parse_tag(xml: &str, name: &str) -> Option<String> {
     let open = format!("<{name}>");
     let close = format!("</{name}>");
     let start = xml.find(&open)? + open.len();
@@ -295,6 +395,18 @@ mod tests {
         let (host, path) = parse_download_info(xml).expect("parsed");
         assert_eq!(host, "mds.storage.yandex.net");
         assert_eq!(path, "/rmusic/abc/29043");
+    }
+
+    #[test]
+    fn builds_signed_direct_link() {
+        let url = crate::media::direct_link(
+            "api.music.yandex.net",
+            "/U2FsdGVkX19/0/1771562/93cb8a19",
+            "1a1d0a63e9a",
+            "abc",
+        );
+        assert!(url.starts_with("https://api.music.yandex.net/get-mp3/"));
+        assert!(url.ends_with("/1a1d0a63e9a/U2FsdGVkX19/0/1771562/93cb8a19"));
     }
 
     #[test]

@@ -228,7 +228,15 @@ WantedBy=graphical-session.target
 1. есть MPRIS-плеер → состояние берётся у него, команды идут в `playerctl`;
 2. плеера нет → работает встроенная симуляция (`state.rs`).
 
-Прямой поток Яндекса пока недоступен: `file-info` отвечает `403 not-allowed`
-(подпись проверена побайтово против кода рендерера), `download-info` → XML → `401`.
-Подробности и матрица проверок — `notes/m1-findings.md`. Когда поток появится,
-`mpris.rs` станет исходящим MPRIS-сервером, контракт `/v1/state` не изменится.
+Прямой поток работает (2026-11-12):
+
+- основной путь — `/get-file-info` с парой «`X-Yandex-Music-Client:
+  YandexMusicDesktopAppWindows/5.95.0` + ключ `kzqU4XhfCaY6B6JTHODeq5`»;
+  ответ — `result.downloadInfo.url`, прямые CDN-ссылки `strm.yandex.net`;
+- резерв — `/tracks/{id}/download-info` → XML → `md5`-подпись → `/get-mp3/...`;
+- качества: `lossless` → `flac-mp4`, `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
+
+Вход: `ymd auth login` — OAuth Device Flow (`daemon/src/oauth.rs`), без своего
+OAuth-приложения; альтернатива — `ymd auth import --from-official`.
+
+`mpris.rs` остаётся источником состояния, пока не поднят собственный плеер (M2).

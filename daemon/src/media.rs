@@ -12,6 +12,41 @@ use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Значение заголовка `X-Yandex-Music-Client`, к которому привязан
+/// [`DESKTOP_SIGN_KEY`]. Ключ и заголовок проверяются вместе: несовпадение даёт 403.
+pub const DESKTOP_CLIENT: &str = "YandexMusicDesktopAppWindows/5.95.0";
+
+/// Ключ подписи десктопного клиента (Windows 5.95.0).
+pub const DESKTOP_SIGN_KEY: &str = "kzqU4XhfCaY6B6JTHODeq5";
+
+/// Соль для подписи прямой ссылки `/get-mp3/{md5}/{ts}{path}`.
+pub const SIGN_SALT: &str = "XGRlBW9FXlekgbPrRHuSiA";
+
+/// Кодеки, которые перечисляет официальный клиент в `get-file-info`.
+pub const FILE_INFO_CODECS: [&str; 7] = [
+    "flac",
+    "flac-mp4",
+    "aac-mp4",
+    "he-aac-mp4",
+    "aac",
+    "he-aac",
+    "mp3",
+];
+
+/// Прямая ссылка на файл из XML `download-info`:
+/// `https://{host}/get-mp3/{md5(SIGN_SALT + path[1:] + s)}/{ts}{path}`.
+///
+/// Ссылка живёт около минуты, поэтому её нельзя кэшировать.
+pub fn direct_link(host: &str, path: &str, ts: &str, s: &str) -> String {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(SIGN_SALT.as_bytes());
+    hasher.update(path.get(1..).unwrap_or("").as_bytes());
+    hasher.update(s.as_bytes());
+    let sign = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    format!("https://{host}/get-mp3/{sign}/{ts}{path}")
+}
+
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)] // используется для encraw (офлайн) в M3
 pub enum SecretKey {
