@@ -20,7 +20,7 @@
 | `daemon/src/httpd.rs` | `/v1/health`, `/v1/state`, `/v1/cmd`, `/v1/events` (SSE) | готов (P0) |
 | `daemon/src/state.rs` | состояние + симулированный плеер (тик 1 Гц) | P0-заглушка |
 | `daemon/src/session.rs` | capability-ключ `0600` | готов |
-| `plugin/widget.luau` | бар: глиф + «Трек — Артист» | P0 |
+| `plugin/widget.luau` | бар: статичная иконка + «Трек — Артист», tooltip | M2 |
 | `plugin/probe.luau` | дамп `barWidget.*`/`ui.*`/`noctalia.*` | P0 ✅ (S2/S3/S5) |
 | `plugin/bridge.luau` | SSE-подписка | P0 ✅ (S4) |
 | `plugin/panel.luau` | `ui.*`-дерево | P0 ✅ (S3) |
