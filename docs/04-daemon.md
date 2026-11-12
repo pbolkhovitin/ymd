@@ -237,6 +237,8 @@ WantedBy=graphical-session.target
 - качества: `lossless` → `flac-mp4`, `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
 
 Вход: `ymd auth login` — OAuth Device Flow (`daemon/src/oauth.rs`), без своего
-OAuth-приложения; альтернатива — `ymd auth import --from-official`.
+OAuth-приложения. Пользователю показывается канонический адрес
+`https://oauth.yandex.ru/device` и 8-символьный код; `ya.ru/device` из ответа API —
+короткий редирект на него. Альтернатива — `ymd auth import --from-official`.
 
 `mpris.rs` остаётся источником состояния, пока не поднят собственный плеер (M2).

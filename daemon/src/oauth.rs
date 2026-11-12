@@ -19,6 +19,13 @@ pub const CLIENT_SECRET: &str = "53bc75238f0c4d08a118e51fe9203300";
 pub const DEVICE_NAME: &str = "ymd";
 
 const OAUTH_BASE: &str = "https://oauth.yandex.ru";
+
+/// Каноническая страница ввода кода устройства.
+///
+/// API отдаёт `https://ya.ru/device` — это короткий редирект на тот же экран.
+/// Показываем канонический адрес: он не зависит от того, куда сейчас ведёт
+/// короткая ссылка, и сразу уходит на `passport.yandex.ru` с нужным `retpath`.
+pub const VERIFICATION_URL: &str = "https://oauth.yandex.ru/device";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +63,8 @@ pub struct TokenResponse {
 struct DeviceCodeWire {
     device_code: String,
     user_code: String,
+    /// Приходит как `https://ya.ru/device`; хранится для диагностики.
+    #[allow(dead_code)]
     verification_url: String,
     #[serde(default = "default_interval")]
     interval: u64,
@@ -94,7 +103,7 @@ pub async fn request_device_code() -> Result<DeviceCode, OAuthError> {
     Ok(DeviceCode {
         device_code: wire.device_code,
         user_code: wire.user_code,
-        verification_url: wire.verification_url,
+        verification_url: VERIFICATION_URL.to_string(),
         interval: wire.interval.max(1),
         expires_in: wire.expires_in,
     })
@@ -165,6 +174,11 @@ mod tests {
         let id = random_id(10);
         assert_eq!(id.len(), 10);
         assert!(id.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn verification_url_is_canonical() {
+        assert_eq!(VERIFICATION_URL, "https://oauth.yandex.ru/device");
     }
 
     #[test]

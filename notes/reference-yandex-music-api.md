@@ -79,9 +79,12 @@ client_secret 53bc75238f0c4d08a118e51fe9203300
 Поток:
 
 1. `POST https://oauth.yandex.ru/device/code` — `client_id`, `device_id` (10 символов),
-   `device_name`. Ответ: `device_code`, `user_code`, `verification_url`
-   (у нас пришёл `https://ya.ru/device`), `interval`, `expires_in`.
-2. Пользователь открывает URL и вводит `user_code`.
+   `device_name`. Ответ: `device_code`, `user_code`, `verification_url`,
+   `interval`, `expires_in`.
+2. Пользователь открывает **`https://oauth.yandex.ru/device`** и вводит `user_code`.
+   В ответе API `verification_url` приходит как `https://ya.ru/device` — это
+   короткий редирект на тот же экран (`302 → oauth.yandex.ru/device →
+   passport.yandex.ru/auth?retpath=…`). Показываем канонический адрес.
 3. `POST https://oauth.yandex.ru/token` — `grant_type=device_code`, `code`,
    `client_id`, `client_secret`. Пока не подтверждено — `400 authorization_pending`;
    при частых запросах — `slow_down` (увеличить интервал).
