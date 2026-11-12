@@ -157,7 +157,10 @@ end
 - `ui.input` с `submitOnEnter = true` (поиск по Enter, не по каждой букве).
 - `ui.scroll` для списка; `ui.select` для качества и типа выдачи.
 - `ui.progress` — статичный индикатор (без `marker`-анимации).
-- Обложка — `ui.image`, `fit = "cover"`, по умолчанию выключена (`minimal`).
+- Обложка — `ui.image{path = <локальный файл>, fit = "cover"}`; сетевые URL не
+  поддерживаются, поэтому файл сначала скачивается в `pluginDataDir()`
+  (`noctalia.download`). В баре — `barWidget.setImage(path)`.
+- `repeat` — ключевое слово Luau: JSON-поле читать как `queue["repeat"]`.
 - Тексты песен — `ui.label` в скролле; автопрокрутка отсутствует.
 
 ## Адаптивность к окружению

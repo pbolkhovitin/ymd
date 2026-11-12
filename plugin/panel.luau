@@ -15,12 +15,47 @@ local s = {
   position = 0,
   duration = 0,
   query = "",
+  cover_url = "",
+  cover_path = "",
+  track_id = "",
   results = {},
   queue = {},
-  repeat = "all",
+  loop_mode = "all",
   shuffle = false,
   hint = "",
 }
+
+-- ui.image принимает ТОЛЬКО локальный путь (проп `path`), поэтому обложку
+-- скачиваем в pluginDataDir и рисуем файлом.
+-- forward declaration: ensure_cover зовёт render, render зовёт ensure_cover
+local render
+
+local function cover_file()
+  return noctalia.pluginDataDir() .. "/cover_" .. tostring(s.track_id) .. ".img"
+end
+
+local function ensure_cover()
+  if s.cover_url == "" or s.cover_path ~= "" then
+    return
+  end
+  local dest = cover_file()
+  noctalia.download(s.cover_url, dest, function(ok, err)
+    if ok then
+      s.cover_path = dest
+      render()
+    else
+      s.cover_url = ""
+      s.hint = "обложка: " .. tostring(err)
+    end
+  end)
+end
+
+local function cover_block()
+  if s.cover_path == "" then
+    return ui.box({ width = 0, height = 0 })
+  end
+  return ui.image({ path = s.cover_path, fit = "cover", width = 40, height = 40 })
+end
 
 local function progress()
   if s.duration <= 0 then
@@ -158,7 +193,7 @@ local function search_input()
 end
 
 local function mode_row()
-  local repeat_text = ({ off = "Повтор: выкл", all = "Повтор: все", one = "Повтор: один" })[s.repeat]
+  local repeat_text = ({ off = "Повтор: выкл", all = "Повтор: все", one = "Повтор: один" })[s.loop_mode]
     or "Повтор: все"
   local shuffle_text = s.shuffle and "Перемешать: вкл" or "Перемешать: выкл"
 
@@ -168,9 +203,11 @@ local function mode_row()
   })
 end
 
-local function render()
+render = function()
+  ensure_cover()
   panel.render(ui.column({ gap = 8, padding = 12, fill = "surface", radius = 10 }, {
     header(),
+    cover_block(),
     artist_row(),
     ui.progress({
       progress = progress(),
@@ -206,11 +243,17 @@ local function apply(state)
     s.title = state.track.title or "—"
     s.duration = state.track.durationMs or 0
     s.artist = table.concat(state.track.artists or {}, ", ")
+    local new_id = tostring(state.track.id or "")
+    if new_id ~= s.track_id then
+      s.track_id = new_id
+      s.cover_path = ""
+    end
+    s.cover_url = state.track.cover or ""
   end
 
   local queue = state.queue or {}
   s.queue = queue.items or {}
-  s.repeat = queue.repeat or "all"
+  s.loop_mode = queue["repeat"] or "all"
   s.shuffle = queue.shuffle == true
 end
 
@@ -251,7 +294,7 @@ function ym_queue_3() play_queue(3) end
 function ym_queue_4() play_queue(4) end
 
 function ym_repeat()
-  local next_mode = ({ off = "all", all = "one", one = "off" })[s.repeat] or "all"
+  local next_mode = ({ off = "all", all = "one", one = "off" })[s.loop_mode] or "all"
   ymd.cmd_payload("repeat", { value = next_mode }, function() refresh() end)
 end
 
@@ -283,6 +326,7 @@ end
 
 function update()
   noctalia.setUpdateInterval(2000)
+  ensure_cover()
   refresh()
 end
 

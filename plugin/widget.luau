@@ -10,6 +10,9 @@ local s = {
   position = 0,
   duration = 0,
   rev = -1,
+  track_id = "",
+  cover_url = "",
+  cover_path = "",
 }
 
 local GLYPH = {
@@ -32,6 +35,34 @@ local function safe_set_glyph(name)
   if not ok then
     noctalia.log("[ym] barWidget.setGlyph unavailable: " .. name)
   end
+end
+
+-- баровый виджет умеет картинку (setImage), но только локальным путём:
+-- обложку скачиваем в pluginDataDir и переиспользуем файл из панели.
+local function safe_set_image(path)
+  local ok = pcall(barWidget.setImage, path)
+  if not ok then
+    noctalia.log("[ym] barWidget.setImage unavailable")
+  end
+end
+
+local function ensure_cover()
+  if s.cover_url == "" or s.cover_path ~= "" then
+    return
+  end
+  local dest = noctalia.pluginDataDir() .. "/cover_" .. tostring(s.track_id) .. ".img"
+  s.cover_path = dest
+  if noctalia.readFile(dest) then
+    safe_set_image(dest)
+    return
+  end
+  noctalia.download(s.cover_url, dest, function(ok)
+    if ok then
+      safe_set_image(dest)
+    else
+      s.cover_path = ""
+    end
+  end)
 end
 
 local function render()
@@ -73,12 +104,23 @@ local function apply(state)
     s.title = state.track.title or ""
     s.artists = state.track.artists or {}
     s.duration = state.track.durationMs or 0
+
+    local id = tostring(state.track.id or "")
+    if id ~= s.track_id then
+      s.track_id = id
+      s.cover_path = ""
+    end
+    s.cover_url = state.track.cover or ""
   else
     s.title = ""
     s.artists = {}
     s.duration = 0
+    s.cover_url = ""
+    s.cover_path = ""
+    s.track_id = ""
   end
 
+  ensure_cover()
   render()
 end
 

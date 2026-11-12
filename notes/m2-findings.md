@@ -73,3 +73,32 @@
 `/v1/search` теперь отдаёт `cover` (`coverUri` → `https://…400x400`), трек
 проносит его в состояние и очередь. Панель пока не рисует картинку: пропы
 `ui.image` не проверены.
+
+
+## Обложки в UI: ui.image (проверено)
+
+| Проп | Результат |
+|---|---|
+| `path` | **единственный рабочий**: локальный файл, относительный путь резолвится от каталога плагина |
+| `src`, `source`, `uri`, `url` | `has no prop '…', ignored` |
+| `fit` | принимается; значения `contain`, `cover`, `stretch` |
+| `width`, `height` | принимаются |
+
+Вывод: сетевые URL `ui.image` не грузит. Схема: `noctalia.download(url, dest, cb)` →
+файл в `pluginDataDir()/cover_<trackId>.img` → `ui.image{path=…, fit="cover"}`.
+В баре то же самое через `barWidget.setImage(path)` (файл переиспользуется).
+
+Проверено живьём: `cover_64072310.img` (33 660 байт) скачался, в логе нет
+`image failed to load`; ошибок Luau нет.
+
+### Ловушки Luau
+
+1. **`repeat` — зарезервированное слово.** `repeat = "all"` в конструкторе таблицы
+   и `s.repeat` — синтаксическая ошибка (`Expected identifier … got 'repeat'`).
+   Поле состояния переименовано в `loop_mode`, а JSON-ключ читается как
+   `queue["repeat"]`. Ошибка была незамеченной: панель падала на `luau_load`,
+   а проверяли только демон через curl.
+2. **Взаимная рекурсия**: `ensure_cover()` вызывает `render()`, а `render()` —
+   `ensure_cover()`. Нужно `local render` до объявления `ensure_cover` и
+   `render = function() … end`, иначе вызов уходит в `nil`
+   (`attempt to call a nil value` в async-callback).
