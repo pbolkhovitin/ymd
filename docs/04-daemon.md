@@ -286,3 +286,25 @@ CLI: `ymd download <id> [--quality]`, `ymd cache list|path|remove|info`.
 уже скачанное; `/v1/search` помечает треки полем `cached`.
 
 Ограничения: докачка после обрыва начинается с нуля (`.part` перезаписывается).
+
+
+## M4: «Моя волна»
+
+| Модуль | Что делает |
+|---|---|
+| `api::wave_start` | `POST /rotor/session/new` → `radioSessionId`, `batchId`, партия треков |
+| `api::wave_more` | `POST /rotor/session/{id}/tracks` → следующая партия |
+| `api::wave_feedback` | `POST /rotor/session/{id}/feedbacks` (`like`/`dislike`/`skip`/`trackStarted`) |
+| `state::WaveInfo` | `sessionId`, `batchId`, `active` — в `/v1/state` как `wave` |
+
+Команды: `wave_start` (заменяет очередь партией радио и запускает первый трек),
+`wave_more`, `wave_feedback`, `wave_stop`.
+
+Догрузка автоматическая: когда до конца очереди остаётся один трек, тикер
+запускает `wave_more` (флаг `wave_pending` не даёт плодить параллельные запросы).
+Треки волны попадают в общую очередь, поэтому `repeat`/`shuffle` и кэш работают
+без отдельного кода.
+
+Тонкость: одиночный `POST …/feedback` не отвечает (соединение закрывается),
+используется только множественный `/feedbacks` с `{"feedback":[…]}`.
+Подробности — `notes/m4-findings.md`.

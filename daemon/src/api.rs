@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub const BASE_URL: &str = "https://api.music.yandex.ru";
 pub const CLIENT_HEADER: &str = "YandexMusicDesktopApp";
@@ -81,6 +81,88 @@ impl Client {
         }
 
         Ok(response.json().await?)
+    }
+
+    /// POST с JSON-телом. Используется ротором («Моя волна»).
+    async fn post_json(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        let response = self
+            .http
+            .post(format!("{BASE_URL}{path}"))
+            .header("authorization", format!("OAuth {}", self.token))
+            .header("x-yandex-music-client", crate::media::DESKTOP_CLIENT)
+            .header("accept-language", "ru")
+            .json(body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: body.chars().take(200).collect(),
+            });
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Новая сессия «Моей волны».
+    pub async fn wave_start(&self) -> Result<WaveBatch, ApiError> {
+        let value = self.post_json("/rotor/session/new", &json!({})).await?;
+        let result = value.get("result").unwrap_or(&value);
+        Ok(WaveBatch {
+            session_id: result
+                .get("radioSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            batch_id: result
+                .get("batchId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tracks: collect_sequence(result),
+        })
+    }
+
+    /// Следующая партия треков существующей сессии.
+    pub async fn wave_more(&self, session_id: &str) -> Result<WaveBatch, ApiError> {
+        let value = self
+            .post_json(&format!("/rotor/session/{session_id}/tracks"), &json!({}))
+            .await?;
+        let result = value.get("result").unwrap_or(&value);
+        Ok(WaveBatch {
+            session_id: session_id.to_string(),
+            batch_id: result
+                .get("batchId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tracks: collect_sequence(result),
+        })
+    }
+
+    /// Обратная связь сессии. `kind`: `trackStarted`, `trackFinished`, `skip`,
+    /// `like`, `dislike`.
+    ///
+    /// Работает только **множественный** эндпоинт `/feedbacks`: одиночный
+    /// `/feedback` в ответ не отдаёт ничего (проверено).
+    pub async fn wave_feedback(
+        &self,
+        session_id: &str,
+        track_id: &str,
+        batch_id: Option<&str>,
+        kind: &str,
+    ) -> Result<(), ApiError> {
+        let mut event = json!({ "type": kind, "trackId": track_id });
+        if let Some(batch_id) = batch_id {
+            event["batchId"] = json!(batch_id);
+        }
+        self.post_json(
+            &format!("/rotor/session/{session_id}/feedbacks"),
+            &json!({ "feedback": [event] }),
+        )
+        .await?;
+        Ok(())
     }
 
     /// Поиск. Возвращает `result` (или корень, если обёртки нет).
@@ -431,6 +513,28 @@ pub struct Stream {
     pub bitrate: Option<u64>,
 }
 
+/// Партия треков сессии радио.
+#[derive(Debug, Clone)]
+pub struct WaveBatch {
+    pub session_id: String,
+    pub batch_id: Option<String>,
+    pub tracks: Vec<Value>,
+}
+
+/// Достаёт треки из `result.sequence` — элементы бывают `{"type":"track","track":{…}}`.
+fn collect_sequence(result: &Value) -> Vec<Value> {
+    result
+        .get("sequence")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("track").cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,6 +566,20 @@ mod tests {
         );
         assert!(url.starts_with("https://api.music.yandex.net/get-mp3/"));
         assert!(url.ends_with("/1a1d0a63e9a/U2FsdGVkX19/0/1771562/93cb8a19"));
+    }
+
+    #[test]
+    fn collects_sequence_tracks() {
+        let value = json!({
+            "sequence": [
+                {"type": "track", "track": {"id": "1", "title": "A"}},
+                {"type": "track", "track": {"id": "2", "title": "B"}},
+                {"type": "concert", "concert": {"id": "3"}}
+            ]
+        });
+        let tracks = collect_sequence(&value);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0]["title"], "A");
     }
 
     #[test]

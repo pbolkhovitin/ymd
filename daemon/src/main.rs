@@ -44,6 +44,13 @@ enum Command {
         #[arg(long, default_value_t = 8765)]
         port: u16,
     },
+    /// Включить «Мою волну» на запущенном демоне.
+    Wave {
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+        #[arg(long)]
+        json: bool,
+    },
     /// Отправить команду запущенному демону.
     Ctl {
         /// toggle | play | pause | next | prev | like | mode
@@ -174,6 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Command::Status { json, port } => status(json, port),
+        Command::Wave { port, json } => wave_cmd(port, json),
         Command::Ctl { op, port } => ctl(&op, port),
         Command::Auth { cmd } => auth_cmd(cmd).await,
         Command::Search { text, page, json } => search_cmd(&text, page, json).await,
@@ -600,6 +608,50 @@ fn status(json: bool, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     println!("position {} / {duration} ms", state.position_ms);
     println!("mode     {}", state.ui.mode);
     println!("rev      {}", state.rev);
+    Ok(())
+}
+
+fn wave_cmd(port: u16, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let key = key()?;
+    let payload = serde_json::json!({ "op": "wave_start" }).to_string();
+    let response = httpd::request(port, "POST", "/v1/cmd", Some(&key), Some(&payload))?;
+    let line = httpd::status_line(&response);
+
+    if !line.contains(" 200 ") {
+        return Err(format!("{line} {}", httpd::body_of(&response)).into());
+    }
+
+    let state = httpd::request(port, "GET", "/v1/state", Some(&key), None)?;
+    let body = httpd::body_of(&state);
+
+    if json {
+        println!("{}", body.trim());
+        return Ok(());
+    }
+
+    let value: serde_json::Value = serde_json::from_str(body)?;
+    let items = value
+        .pointer("/queue/items")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    println!("Моя волна: {} треков в очереди", items.len());
+    for (index, item) in items.iter().take(10).enumerate() {
+        let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+        let artists = item
+            .get("artists")
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let mark = if index == 0 { "▶" } else { " " };
+        println!("{mark} {:2}. {title} — {artists}", index + 1);
+    }
     Ok(())
 }
 

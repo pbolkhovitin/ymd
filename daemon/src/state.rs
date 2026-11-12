@@ -114,6 +114,15 @@ impl Default for UiState {
     }
 }
 
+/// Состояние сессии «Моей волны».
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveInfo {
+    pub session_id: String,
+    pub batch_id: Option<String>,
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
@@ -125,6 +134,9 @@ pub struct State {
     pub queue: Queue,
     pub env: EnvState,
     pub ui: UiState,
+    /// Сессия радио, если включена «Моя волна».
+    #[serde(default)]
+    pub wave: Option<WaveInfo>,
 }
 
 impl Default for State {
@@ -138,6 +150,7 @@ impl Default for State {
             queue: Queue::default(),
             env: EnvState::default(),
             ui: UiState::default(),
+            wave: None,
         }
     }
 }
@@ -156,6 +169,8 @@ pub struct AppState {
     /// true, после первого успешного запуска локального плеера: с этого момента
     /// внешний MPRIS больше не подменяет состояние.
     owned: Arc<AtomicBool>,
+    /// Защита от параллельных догрузок «Моей волны».
+    wave_pending: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -168,6 +183,7 @@ impl AppState {
             player: None,
             local: Arc::new(AtomicBool::new(false)),
             owned: Arc::new(AtomicBool::new(false)),
+            wave_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -255,6 +271,9 @@ impl AppState {
                     if let Some(track) = st.track.as_mut() {
                         track.liked = liked;
                     }
+                }
+                "wave_stop" => {
+                    st.wave = None;
                 }
                 "wave" => {}
                 "mode" => {
@@ -423,6 +442,13 @@ impl AppState {
     /// Как `command`, но для операций, которым нужен URL потока, сначала
     /// резолвит его через API — это сетевой вызов, поэтому async.
     pub async fn command_async(&self, op: &str, payload: Option<&Value>) -> Result<u64, String> {
+        match op {
+            "wave_start" => return self.wave_start().await,
+            "wave_more" => return self.wave_more().await,
+            "wave_feedback" => return self.wave_feedback(payload).await,
+            _ => {}
+        }
+
         let needs_url = matches!(op, "play_track" | "queue_play" | "next" | "prev");
         if !needs_url || self.player.is_none() {
             return self.command(op, payload);
@@ -495,6 +521,128 @@ impl AppState {
             .await
             .map_err(|err| err.to_string())?;
         Ok(stream.url)
+    }
+
+    /// Включена ли «Моя волна».
+    pub fn wave_active(&self) -> bool {
+        self.snapshot().wave.map(|wave| wave.active).unwrap_or(false)
+    }
+
+    /// Новая сессия «Моей волны»: очередь заменяется партией радио.
+    pub async fn wave_start(&self) -> Result<u64, String> {
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let batch = client.wave_start().await.map_err(|err| err.to_string())?;
+
+        if batch.session_id.is_empty() || batch.tracks.is_empty() {
+            return Err("волна: пустой ответ".to_string());
+        }
+
+        let items: Vec<QueueItem> = batch
+            .tracks
+            .iter()
+            .filter_map(|value| track_from_value(value).ok())
+            .map(|track| QueueItem::from(&track))
+            .collect();
+
+        if items.is_empty() {
+            return Err("волна: не удалось разобрать треки".to_string());
+        }
+
+        {
+            let mut st = self.inner.write().map_err(|err| err.to_string())?;
+            st.queue.items = items;
+            st.queue.sync_length();
+            st.queue.index = 0;
+            st.queue.shuffle = false;
+            st.wave = Some(WaveInfo {
+                session_id: batch.session_id.clone(),
+                batch_id: batch.batch_id.clone(),
+                active: true,
+            });
+            st.rev += 1;
+            let _ = self.tx.send(serde_json::to_string(&*st).unwrap_or_default());
+        }
+
+        // `Box::pin` разрывает рекурсию async-функций (`command_async` ↔ `wave_start`).
+        Box::pin(self.command_async("queue_play", Some(&serde_json::json!({ "index": 0 })))).await
+    }
+
+    /// Догрузка следующей партии треков (вызывается тикером и вручную).
+    pub async fn wave_more(&self) -> Result<u64, String> {
+        if self.wave_pending.swap(true, Ordering::Relaxed) {
+            return Ok(0);
+        }
+        let result = self.wave_more_inner().await;
+        self.wave_pending.store(false, Ordering::Relaxed);
+        result
+    }
+
+    async fn wave_more_inner(&self) -> Result<u64, String> {
+        let wave = self
+            .snapshot()
+            .wave
+            .ok_or_else(|| "волна не запущена".to_string())?;
+
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let batch = client
+            .wave_more(&wave.session_id)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let items: Vec<QueueItem> = batch
+            .tracks
+            .iter()
+            .filter_map(|value| track_from_value(value).ok())
+            .map(|track| QueueItem::from(&track))
+            .collect();
+
+        if items.is_empty() {
+            return Err("волна: пустая партия".to_string());
+        }
+
+        let mut st = self.inner.write().map_err(|err| err.to_string())?;
+        st.queue.items.extend(items);
+        st.queue.sync_length();
+        if let Some(wave) = st.wave.as_mut() {
+            if batch.batch_id.is_some() {
+                wave.batch_id = batch.batch_id;
+            }
+        }
+        st.rev += 1;
+        let rev = st.rev;
+        let _ = self.tx.send(serde_json::to_string(&*st).unwrap_or_default());
+        Ok(rev)
+    }
+
+    /// Обратная связь: `like`, `dislike`, `skip`, `trackStarted`.
+    async fn wave_feedback(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let kind = payload
+            .and_then(|value| value.get("value"))
+            .and_then(Value::as_str)
+            .unwrap_or("trackStarted")
+            .to_string();
+
+        let state = self.snapshot();
+        let wave = state.wave.ok_or_else(|| "волна не запущена".to_string())?;
+        let track_id = state
+            .track
+            .as_ref()
+            .map(|track| track.id.clone())
+            .ok_or_else(|| "нет текущего трека".to_string())?;
+
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        client
+            .wave_feedback(&wave.session_id, &track_id, wave.batch_id.as_deref(), &kind)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        Ok(state.rev)
+    }
+
+    /// Сколько треков осталось до конца очереди.
+    pub fn queue_remaining(&self) -> usize {
+        let state = self.snapshot();
+        state.queue.items.len().saturating_sub(state.queue.index + 1)
     }
 
     /// Синхронизирует состояние с локальным плеером. Возвращает ревизию.
@@ -642,6 +790,16 @@ impl AppState {
                         .map(|player| player.position_ms())
                         .unwrap_or(0);
                     app.sync_local(position);
+
+                    // «Моя волна»: догружаем партию заранее, чтобы не было паузы.
+                    if app.wave_active() && app.queue_remaining() <= 1 {
+                        let app = app.clone();
+                        tokio::spawn(async move {
+                            if let Err(err) = app.wave_more().await {
+                                tracing::warn!("wave_more: {err}");
+                            }
+                        });
+                    }
                     continue;
                 }
 

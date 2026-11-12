@@ -128,6 +128,7 @@ local function transport()
     }),
     ui.button({ text = "▶❚", variant = "secondary", onClick = "next" }),
     ui.button({ text = "♥", variant = "ghost", onClick = "like" }),
+    ui.button({ text = "Волна", variant = "ghost", onClick = "ym_wave" }),
     ui.spacer({}),
     ui.button({ text = "×", variant = "ghost", onClick = "hidePanel" }),
   })
@@ -359,4 +360,8 @@ end
 
 function hidePanel()
   noctalia.togglePanel("pbolkhovitin/yandex-music:panel")
+end
+
+function ym_wave()
+  ymd.cmd_payload("wave_start", {}, function() refresh() end)
 end

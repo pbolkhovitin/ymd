@@ -77,7 +77,8 @@ M2 готов: собственный плеер (GStreamer `playbin3` → PipeW
 M3 готов: `ymd download`, `ymd download-album`, `ymd cache list/path/remove/info`,
 лимит + LRU (`[cache] limit_mb`), `cached` в `/v1/search` и `✓` в панели.
 Локальный файл играет через `file://` без сети.
-Дальше: докачка после обрыва, тексты песен, «Моя волна» (M4).
+M4: «Моя волна» готова — `ymd wave`, кнопка в панели, автодогрузка,
+`wave_feedback`. Дальше: тексты песен, докачка после обрыва, Ynison.
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.
