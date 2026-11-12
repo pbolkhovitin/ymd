@@ -215,6 +215,22 @@ WantedBy=graphical-session.target
 без секретов.
 
 
+## M2: собственный плеер
+
+| Модуль | Что делает |
+|---|---|
+| `player.rs` | `playbin3` → autoaudiosink (PipeWire): `load/play/pause/toggle/stop`, `seek_ms`, `position_ms`, `duration_ms`, `set_volume`, `poll_eos` |
+| `mpris_server.rs` | исходящий MPRIS (`org.mpris.MediaPlayer2` + `.Player`) через zbus 5 |
+
+Цепочка `play_track`: плагин → `POST /v1/cmd` → `command_async` резолвит URL
+через `api::stream` → `command` кладёт трек в очередь и грузит URL в плеер.
+Тикер раз в секунду берёт позицию у плеера, на EOS зовёт `next`
+(с резолвом следующего трека). MPRIS публикуется отдельной задачей; соединение
+удерживается живым, иначе шина отпускает имя.
+
+Проверено: `playerctl --player=ymd metadata` отдаёт трек, `play-pause` работает,
+медиа-клавиши и виджет `media` получают состояние.
+
 ## M1: источник состояния
 
 | Модуль | Что делает | Статус |

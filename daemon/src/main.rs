@@ -10,6 +10,8 @@ mod httpd;
 mod media;
 mod mpris;
 mod oauth;
+mod player;
+mod mpris_server;
 mod session;
 mod state;
 
@@ -114,8 +116,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Command::Serve { port } => {
             let key = session::ensure_key()?;
-            let app = AppState::new();
+            let app = match player::Player::new() {
+                Ok(player) => AppState::with_player(player),
+                Err(err) => {
+                    tracing::warn!("звук недоступен ({err}), работаем без плеера");
+                    AppState::new()
+                }
+            };
             app.spawn_ticker();
+            let mpris_app = app.clone();
+            tokio::spawn(async move {
+                match mpris_server::serve(mpris_app).await {
+                    Ok(connection) => {
+                        // Держим соединение живым: при drop шина отпускает имя.
+                        let _connection = connection;
+                        std::future::pending::<()>().await;
+                    }
+                    Err(err) => tracing::warn!("mpris недоступен: {err}"),
+                }
+            });
             httpd::serve(app, port, key).await
         }
         Command::Doctor => {

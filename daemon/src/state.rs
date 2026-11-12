@@ -144,6 +144,10 @@ pub struct AppState {
     tx: broadcast::Sender<String>,
     /// true, когда состоянием управляет внешний MPRIS-плеер.
     external: Arc<AtomicBool>,
+    /// Локальный плеер. Если в него загружен поток, он главнее внешнего MPRIS.
+    player: Option<Arc<crate::player::Player>>,
+    /// true, когда звук идёт из локального плеера.
+    local: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -153,7 +157,20 @@ impl AppState {
             inner: Arc::new(RwLock::new(State::default())),
             tx,
             external: Arc::new(AtomicBool::new(false)),
+            player: None,
+            local: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Демон со звуком: локальный плеер становится основным источником.
+    pub fn with_player(player: crate::player::Player) -> Self {
+        let mut app = Self::new();
+        app.player = Some(Arc::new(player));
+        app
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.local.load(Ordering::Relaxed)
     }
 
     pub fn snapshot(&self) -> State {
@@ -175,7 +192,19 @@ impl AppState {
     pub fn command(&self, op: &str, payload: Option<&Value>) -> Result<u64, String> {
         // Внешний плеер умеет только транспортные команды; остальное — локально.
         let transport = matches!(op, "toggle" | "play" | "pause" | "next" | "prev");
-        if transport && self.is_external() && crate::mpris::send(op) {
+        if transport && self.is_local() {
+            if let Some(player) = &self.player {
+                let result = match op {
+                    "toggle" => player.toggle(),
+                    "play" => player.play(),
+                    "pause" => player.pause(),
+                    _ => Ok(()),
+                };
+                if let Err(err) = result {
+                    tracing::warn!("player {op}: {err}");
+                }
+            }
+        } else if transport && self.is_external() && crate::mpris::send(op) {
             if let Some(snapshot) = crate::mpris::poll() {
                 return Ok(self.apply_mpris(snapshot));
             }
@@ -197,6 +226,14 @@ impl AppState {
                 }
                 "play" => st.status = "playing".to_string(),
                 "pause" => st.status = "paused".to_string(),
+                "stop" => {
+                    st.status = "stopped".to_string();
+                    st.position_ms = 0;
+                    if let Some(player) = &self.player {
+                        player.stop();
+                    }
+                    self.local.store(false, Ordering::Relaxed);
+                }
                 "next" => advance(&mut st, 1),
                 "prev" => advance(&mut st, -1),
                 "like" => {
@@ -256,6 +293,9 @@ impl AppState {
                         .and_then(Value::as_f64)
                         .ok_or_else(|| "volume: нужно value".to_string())?;
                     st.volume = value.clamp(0.0, 1.0);
+                    if let Some(player) = &self.player {
+                        player.set_volume(st.volume);
+                    }
                 }
                 "seek" => {
                     let position = payload
@@ -269,8 +309,37 @@ impl AppState {
                     } else {
                         position
                     };
+                    if let Some(player) = &self.player {
+                        player.seek_ms(st.position_ms);
+                    }
                 }
                 other => return Err(format!("unknown op: {other}")),
+            }
+
+            // Появился URL потока — отдаём его локальному плееру.
+            if matches!(op, "play_track" | "queue_play" | "next" | "prev") {
+                if let Some(url) = payload.and_then(|v| v.get("url")).and_then(Value::as_str) {
+                    if let Some(player) = &self.player {
+                        match player.load(url) {
+                            Ok(()) => {
+                                self.local.store(true, Ordering::Relaxed);
+                                st.status = "playing".to_string();
+                            }
+                            Err(err) => tracing::warn!("player load: {err}"),
+                        }
+                    }
+                }
+            }
+
+            // Локальный плеер — источник истины по статусу.
+            if self.is_local() {
+                if let Some(player) = &self.player {
+                    st.status = if player.is_playing() {
+                        "playing".to_string()
+                    } else {
+                        "paused".to_string()
+                    };
+                }
             }
 
             st.rev += 1;
@@ -279,6 +348,109 @@ impl AppState {
 
         self.publish(&snapshot);
         Ok(snapshot.rev)
+    }
+
+    /// Как `command`, но для операций, которым нужен URL потока, сначала
+    /// резолвит его через API — это сетевой вызов, поэтому async.
+    pub async fn command_async(&self, op: &str, payload: Option<&Value>) -> Result<u64, String> {
+        let needs_url = matches!(op, "play_track" | "queue_play" | "next" | "prev");
+        if !needs_url || self.player.is_none() {
+            return self.command(op, payload);
+        }
+
+        let track_id = match op {
+            "play_track" => payload.and_then(|v| v.get("id")).and_then(value_to_id),
+            "queue_play" => payload
+                .and_then(|v| v.get("index"))
+                .and_then(Value::as_u64)
+                .and_then(|index| {
+                    self.snapshot()
+                        .queue
+                        .items
+                        .get(index as usize)
+                        .map(|item| item.id.clone())
+                }),
+            _ => {
+                let state = self.snapshot();
+                let len = state.queue.items.len();
+                if len == 0 {
+                    None
+                } else {
+                    let delta = if op == "next" { 1 } else { -1 };
+                    let index = (state.queue.index as isize + delta).rem_euclid(len as isize);
+                    state
+                        .queue
+                        .items
+                        .get(index as usize)
+                        .map(|item| item.id.clone())
+                }
+            }
+        };
+
+        let Some(track_id) = track_id else {
+            return self.command(op, payload);
+        };
+
+        let url = match self.resolve_url(&track_id).await {
+            Ok(url) => Some(url),
+            Err(err) => {
+                tracing::warn!("stream resolve ({track_id}): {err}");
+                None
+            }
+        };
+
+        let mut owned = payload
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        if let (Some(url), Some(object)) = (url, owned.as_object_mut()) {
+            object.insert("url".to_string(), Value::String(url));
+        }
+
+        self.command(op, Some(&owned))
+    }
+
+    async fn resolve_url(&self, track_id: &str) -> Result<String, String> {
+        let id: u64 = track_id
+            .parse()
+            .map_err(|_| format!("нечисловой id: {track_id}"))?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let stream = client
+            .stream(id, crate::api::Quality::Hq)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(stream.url)
+    }
+
+    /// Синхронизирует состояние с локальным плеером. Возвращает ревизию.
+    fn sync_local(&self, position_ms: u64) -> u64 {
+        let (next, changed) = {
+            let mut st = match self.inner.write() {
+                Ok(guard) => guard,
+                Err(_) => return 0,
+            };
+            let status = if self
+                .player
+                .as_ref()
+                .map(|p| p.is_playing())
+                .unwrap_or(false)
+            {
+                "playing"
+            } else {
+                "paused"
+            };
+            let changed =
+                st.status != status || st.position_ms.abs_diff(position_ms) > 1500;
+            st.status = status.to_string();
+            st.position_ms = position_ms;
+            if changed {
+                st.rev += 1;
+            }
+            (st.clone(), changed)
+        };
+        if changed {
+            self.publish(&next);
+        }
+        next.rev
     }
 
     /// Один тик «плеера» (P0: позиция без звука).
@@ -366,6 +538,29 @@ impl AppState {
             let mut ticker = tokio::time::interval(Duration::from_secs(1));
             loop {
                 ticker.tick().await;
+
+                // Локальный плеер главнее: он и звук, и позиция.
+                if app.is_local() {
+                    let eos = app
+                        .player
+                        .as_ref()
+                        .map(|player| player.poll_eos())
+                        .unwrap_or(false);
+                    if eos {
+                        if let Err(err) = app.command_async("next", None).await {
+                            tracing::warn!("next after eos: {err}");
+                        }
+                        continue;
+                    }
+                    let position = app
+                        .player
+                        .as_ref()
+                        .map(|player| player.position_ms())
+                        .unwrap_or(0);
+                    app.sync_local(position);
+                    continue;
+                }
+
                 match crate::mpris::poll() {
                     Some(snapshot) => {
                         app.external.store(true, Ordering::Relaxed);
@@ -385,6 +580,14 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Приводит id из JSON (строка или число) к строке.
+fn value_to_id(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| value.as_u64().map(|number| number.to_string()))
 }
 
 /// Шаг по очереди: +1 — следующий, -1 — предыдущий.

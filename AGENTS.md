@@ -25,7 +25,9 @@
 | `plugin/bridge.luau` | SSE-подписка | P0 ✅ (S4) |
 | `plugin/panel.luau` | `ui.*`-дерево | P0 ✅ (S3) |
 | `daemon/src/api.rs` | HTTP-клиент API + `stream` | M1 ✅ (кроме потока) |
-| `daemon/src/mpris.rs` | внешний MPRIS через `playerctl` | M1 ✅ (временный) |
+| `daemon/src/mpris.rs` | внешний MPRIS через `playerctl` | M1 ✅ (фоллбэк) |
+| `daemon/src/player.rs` | GStreamer `playbin3` | M2 ✅ |
+| `daemon/src/mpris_server.rs` | исходящий MPRIS (zbus) | M2 ✅ |
 | `daemon/src/httpd.rs` | + `/v1/search`, `payload` в `/v1/cmd` | M1 ✅ |
 | `plugin/panel.luau` | поиск, результаты, очередь, транспорт | M1 ✅ |
 
@@ -65,8 +67,9 @@ M1 в работе: API-клиент, `ymd search/track/album/artist`, MPRIS-м�
 «заголовок клиента + ключ» (см. `notes/reference-yandex-music-api.md`).
 Вход — `ymd auth login` (Device Flow). Панель с поиском и очередью готова.
 
-Дальше M2: собственный плеер (GStreamer `playbin3` → PipeWire), исходящий
-MPRIS, очередь из панели начинает играть без внешнего клиента.
+M2 готов: собственный плеер (GStreamer `playbin3` → PipeWire) и исходящий MPRIS.
+`playerctl --player=ymd` управляет демоном, медиа-клавиши работают.
+Дальше: очередь из панели с автопереходом, обложки, офлайн-кэш (M3).
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.

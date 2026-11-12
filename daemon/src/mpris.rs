@@ -54,7 +54,8 @@ pub fn detect() -> Option<String> {
     let players: Vec<String> = String::from_utf8_lossy(&list.stdout)
         .lines()
         .map(|line| line.split_whitespace().next().unwrap_or("").to_string())
-        .filter(|name| !name.is_empty())
+        // Свой собственный MPRIS-сервер не должен быть источником состояния.
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("ymd"))
         .collect();
 
     for preferred in PREFERRED {

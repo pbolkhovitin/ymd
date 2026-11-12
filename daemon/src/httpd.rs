@@ -93,7 +93,7 @@ async fn cmd(
         ));
     }
 
-    match shared.app.command(&request.op, request.payload.as_ref()) {
+    match shared.app.command_async(&request.op, request.payload.as_ref()).await {
         Ok(rev) => Ok(Json(serde_json::json!({ "ok": true, "rev": rev }))),
         Err(err) => Err((StatusCode::BAD_REQUEST, err)),
     }
