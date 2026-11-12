@@ -10,6 +10,7 @@ mod httpd;
 mod media;
 mod mpris;
 mod oauth;
+mod cache;
 mod player;
 mod mpris_server;
 mod session;
@@ -63,6 +64,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Скачать трек в офлайн-кэш.
+    Download {
+        id: u64,
+        #[arg(long, default_value = "hq")]
+        quality: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Офлайн-кэш: список, удаление, путь.
+    Cache {
+        #[command(subcommand)]
+        cmd: CacheCommand,
+    },
     /// Метаданные трека.
     Track {
         id: u64,
@@ -78,6 +92,18 @@ enum Command {
         #[arg(long)]
         quiet: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum CacheCommand {
+    /// Список скачанных треков.
+    List,
+    /// Удалить трек из кэша.
+    Remove { id: String },
+    /// Путь к локальному файлу трека (если есть).
+    Path { id: String },
+    /// Каталог кэша и суммарный размер.
+    Info,
 }
 
 #[derive(Subcommand, Debug)]
@@ -145,6 +171,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Ctl { op, port } => ctl(&op, port),
         Command::Auth { cmd } => auth_cmd(cmd).await,
         Command::Search { text, page, json } => search_cmd(&text, page, json).await,
+        Command::Download { id, quality, json } => download_cmd(id, &quality, json).await,
+        Command::Cache { cmd } => {
+            match cmd {
+                CacheCommand::List => cache_list(),
+                CacheCommand::Remove { id } => cache_remove(&id),
+                CacheCommand::Path { id } => cache_path(&id),
+                CacheCommand::Info => cache_info(),
+            }
+            Ok(())
+        }
         Command::Track { id, json } => track_cmd(id, json).await,
         Command::Stream {
             id,
@@ -198,6 +234,106 @@ async fn search_cmd(
         println!("{id:>12}  {title} — {} [{duration}]", artists.join(", "));
     }
     Ok(())
+}
+
+async fn download_cmd(
+    id: u64,
+    quality: &str,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let quality = api::Quality::parse(quality).ok_or("качество: lossless | hq | nq")?;
+    let client = api::Client::from_store()?;
+    let value = client.track(&id.to_string()).await?;
+    // `/tracks/{id}` отдаёт `{"track": {...}}` (иногда — массив из одного).
+    let item = value
+        .get("track")
+        .cloned()
+        .or_else(|| value.as_array().and_then(|items| items.first()).cloned())
+        .unwrap_or(value);
+    let track = state::track_from_value(&item)?;
+
+    eprintln!(
+        "скачиваем: {} — {}",
+        track.title,
+        track.artist_line()
+    );
+
+    let mut last_decile = 0u64;
+    let entry = cache::download(&client, &track, quality, |done, total| {
+        if total == 0 {
+            return;
+        }
+        let decile = done * 10 / total;
+        if decile != last_decile || done == total {
+            last_decile = decile;
+            eprint!("\r  {:>3}% {:>6.1} / {:.1} МиБ", done * 100 / total, done as f64 / 1048576.0, total as f64 / 1048576.0);
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+    })
+    .await?;
+    eprintln!();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entry)?);
+    } else {
+        println!(
+            "ok {} — {} ({}, {}, {:.1} МиБ)",
+            entry.id,
+            entry.title,
+            entry.codec,
+            entry.quality,
+            entry.bytes as f64 / 1048576.0
+        );
+    }
+    Ok(())
+}
+
+fn cache_list() {
+    let items = cache::list();
+    if items.is_empty() {
+        println!("кэш пуст: {}", cache::dir().display());
+        return;
+    }
+    for entry in items {
+        println!(
+            "{:>10}  {:>6.1} МиБ  {}  {} — {}",
+            entry.id,
+            entry.bytes as f64 / 1048576.0,
+            entry.quality,
+            entry.title,
+            entry.artists.join(", ")
+        );
+    }
+    println!(
+        "всего: {} треков, {:.1} МиБ",
+        cache::list().len(),
+        cache::total_bytes() as f64 / 1048576.0
+    );
+}
+
+fn cache_remove(id: &str) {
+    match cache::remove(id) {
+        Ok(true) => println!("удалён {id}"),
+        Ok(false) => println!("нет в кэше: {id}"),
+        Err(err) => eprintln!("ошибка: {err}"),
+    }
+}
+
+fn cache_path(id: &str) {
+    match cache::path_for(id) {
+        Some(path) => println!("{}", path.display()),
+        None => println!("нет в кэше: {id}"),
+    }
+}
+
+fn cache_info() {
+    println!("каталог: {}", cache::dir().display());
+    println!("индекс:  {}", cache::index_path().display());
+    println!(
+        "занято:  {:.1} МиБ в {} треках",
+        cache::total_bytes() as f64 / 1048576.0,
+        cache::list().len()
+    );
 }
 
 async fn track_cmd(id: u64, json: bool) -> Result<(), Box<dyn std::error::Error>> {

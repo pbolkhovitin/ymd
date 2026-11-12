@@ -480,6 +480,12 @@ impl AppState {
     }
 
     async fn resolve_url(&self, track_id: &str) -> Result<String, String> {
+        // Офлайн-кэш приоритетнее сети: локальный файл играет без токена и сети.
+        if let Some(path) = crate::cache::path_for(track_id) {
+            tracing::debug!(track = %track_id, file = %path.display(), "play from cache");
+            return Ok(format!("file://{}", path.display()));
+        }
+
         let id: u64 = track_id
             .parse()
             .map_err(|_| format!("нечисловой id: {track_id}"))?;
@@ -730,6 +736,11 @@ fn track_from_queue_item(item: &QueueItem) -> Track {
 }
 
 /// Разбирает трек из payload команды. Принимает и camelCase, и snake_case.
+/// Публичная обёртка для CLI: трек из произвольного JSON-объекта.
+pub fn track_from_value(value: &Value) -> Result<Track, String> {
+    track_from_payload(Some(value))
+}
+
 fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
     let value = payload.ok_or_else(|| "нужен payload с треком".to_string())?;
     let field = |name: &str| -> Option<&Value> {
@@ -753,20 +764,28 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         .unwrap_or("Без названия")
         .to_string();
 
+    // artists: строки (из UI) или объекты API (`{"name": ...}`).
     let artists = field("artists")
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
+                .filter_map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .or_else(|| v.get("name").and_then(Value::as_str).map(str::to_string))
+                })
                 .collect()
         })
         .unwrap_or_default();
 
     let duration_ms = field("durationMs").and_then(Value::as_u64).unwrap_or(0);
     let album = field("album")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+        .and_then(|v| {
+            v.as_str().map(str::to_string).or_else(|| {
+                v.get("title").and_then(Value::as_str).map(str::to_string)
+            })
+        });
     let cover = field("cover")
         .and_then(Value::as_str)
         .map(str::to_string);

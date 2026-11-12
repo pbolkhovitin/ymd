@@ -153,6 +153,20 @@ impl Client {
 
     /// `/get-file-info` — подписанный запрос за прямыми ссылками.
     async fn file_info(&self, track_id: u64, quality: Quality) -> Result<Stream, ApiError> {
+        self.file_info_with(track_id, quality, "raw").await
+    }
+
+    /// Офлайн-поток: `transport=encraw` + ключ расшифровки в ответе.
+    pub async fn encraw(&self, track_id: u64, quality: Quality) -> Result<Stream, ApiError> {
+        self.file_info_with(track_id, quality, "encraw").await
+    }
+
+    async fn file_info_with(
+        &self,
+        track_id: u64,
+        quality: Quality,
+        transport: &str,
+    ) -> Result<Stream, ApiError> {
         let ts = crate::media::now_ts();
         let codecs = crate::media::FILE_INFO_CODECS;
         // В подписи кодеки конкатенируются без разделителя, в query — через запятую.
@@ -162,7 +176,7 @@ impl Client {
             &[track_id],
             quality.as_str(),
             &codecs.concat(),
-            "raw",
+            transport,
         );
 
         let value = self
@@ -173,7 +187,7 @@ impl Client {
                     ("trackId", track_id.to_string()),
                     ("quality", quality.as_str().to_string()),
                     ("codecs", codecs.join(",")),
-                    ("transports", "raw".to_string()),
+                    ("transports", transport.to_string()),
                     ("sign", sign),
                 ],
                 crate::media::DESKTOP_CLIENT,
@@ -217,6 +231,47 @@ impl Client {
                 .to_string(),
             bitrate: info.get("bitrate").and_then(Value::as_u64),
         })
+    }
+
+    /// GET с `Range` для почанковой загрузки. Возвращает (данные, полный размер).
+    ///
+    /// `end = None` означает «до конца файла» — так узнаём размер.
+    pub async fn fetch_range(
+        &self,
+        url: &str,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<(Vec<u8>, Option<u64>), ApiError> {
+        let range = match end {
+            Some(end) => format!("bytes={start}-{end}"),
+            None => format!("bytes={start}-"),
+        };
+
+        let response = self
+            .http
+            .get(url)
+            .header("range", range)
+            .header("x-yandex-music-client", crate::media::DESKTOP_CLIENT)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !(status.is_success() || status.as_u16() == 206) {
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: String::new(),
+            });
+        }
+
+        let total = response
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit('/').next())
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let bytes = response.bytes().await?.to_vec();
+        Ok((bytes, total))
     }
 
     /// `/tracks/{id}/download-info` + XML → подписанная ссылка `/get-mp3/...`.

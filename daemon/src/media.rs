@@ -154,3 +154,51 @@ mod tests {
         assert_eq!(sign, again);
     }
 }
+
+/// Расшифровка `encraw`-чанка: AES-128-CTR, counter = `floor(offset / 16)`.
+///
+/// Поток шифруется непрерывно, поэтому чанк можно расшифровать независимо,
+/// зная его абсолютное смещение в файле.
+pub fn decrypt_chunk(key: &[u8], offset: u64, data: &mut [u8]) -> Result<(), &'static str> {
+    use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
+    use aes::Aes128;
+    use ctr::Ctr128BE;
+
+    if key.len() != 16 {
+        return Err("key must be 16 bytes");
+    }
+
+    // 16-байтовый big-endian счётчик блока: старшие 8 байт нулевые.
+    let mut iv = [0u8; 16];
+    iv[8..].copy_from_slice(&(offset / 16).to_be_bytes());
+
+    let mut cipher: Ctr128BE<Aes128> =
+        Ctr128BE::new_from_slices(key, &iv).map_err(|_| "invalid iv")?;
+
+    let skip = offset % 16;
+    if skip > 0 {
+        cipher.seek(skip);
+    }
+    cipher.apply_keystream(data);
+    Ok(())
+}
+
+#[cfg(test)]
+mod decrypt_tests {
+    use super::decrypt_chunk;
+
+    #[test]
+    fn chunks_decrypt_at_absolute_offsets() {
+        let key = [9u8; 16];
+        let plain: Vec<u8> = (0..64u8).collect();
+
+        // Шифруем целиком с offset 0 (CTR симметричен).
+        let mut stream = plain.clone();
+        decrypt_chunk(&key, 0, &mut stream).unwrap();
+
+        // Чанк со смещением 20 должен расшифроваться в тот же срез.
+        let mut chunk = stream[20..52].to_vec();
+        decrypt_chunk(&key, 20, &mut chunk).unwrap();
+        assert_eq!(chunk, &plain[20..52]);
+    }
+}

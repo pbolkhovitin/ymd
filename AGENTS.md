@@ -30,6 +30,7 @@
 | `daemon/src/mpris_server.rs` | исходящий MPRIS (zbus) | M2 ✅ |
 | `daemon/src/httpd.rs` | + `/v1/search`, `payload` в `/v1/cmd` | M1 ✅ |
 | `plugin/panel.luau` | поиск, результаты, очередь, транспорт | M1 ✅ |
+| `daemon/src/cache.rs` | офлайн-кэш `encraw` + AES-CTR | M3 ✅ (базово) |
 
 ## Ограничения окружения агента
 
@@ -70,7 +71,12 @@ M1 в работе: API-клиент, `ymd search/track/album/artist`, MPRIS-м�
 M2 готов: собственный плеер (GStreamer `playbin3` → PipeWire) и исходящий MPRIS.
 `playerctl --player=ymd` управляет демоном, медиа-клавиши работают.
 Очередь: автопереход, `repeat/shuffle/queue_remove`, обложки в состоянии.
-Дальше: обложки в UI (пропы `ui.image`), офлайн-кэш (M3).
+Обложки: `ui.image` принимает только локальный `path`, файл качается в
+`pluginDataDir()`; в баре — `barWidget.setImage`.
+
+M3 (базово) готов: `ymd download`, `ymd cache list/path/remove/info`,
+локальный файл играет через `file://` без сети. Дальше: лимит кэша + LRU,
+докачка после обрыва, отметка «скачано» в поиске.
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.
