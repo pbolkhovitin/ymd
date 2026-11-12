@@ -94,35 +94,9 @@ pub fn remove(track_id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Лимит кэша из `~/.config/ymd/config.toml` (`[cache] limit_mb = 2048`).
+/// Лимит кэша из `~/.config/ymd/config.toml` (`[cache] limit_mb`).
 pub fn limit_bytes() -> u64 {
-    let path = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ymd")
-        .join("config.toml");
-
-    #[derive(serde::Deserialize, Default)]
-    struct Cache {
-        #[serde(default = "default_limit_mb")]
-        limit_mb: u64,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct Config {
-        #[serde(default)]
-        cache: Option<Cache>,
-    }
-    fn default_limit_mb() -> u64 {
-        2048
-    }
-
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|text| toml::from_str::<Config>(&text).ok())
-        .and_then(|config| config.cache)
-        .map(|cache| cache.limit_mb)
-        .unwrap_or_else(default_limit_mb)
-        * 1024
-        * 1024
+    crate::config::load().cache.limit_mb * 1024 * 1024
 }
 
 /// Удаляет самые старые записи, пока суммарный размер не влезет в лимит.

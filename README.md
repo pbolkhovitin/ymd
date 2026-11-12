@@ -39,6 +39,16 @@ ym-noctalia/
 └── notes/p0-findings.md     # заполняется по итогам спайков
 ~~~
 
+## Качество звука
+
+По умолчанию — **lossless** (FLAC в MP4). Настройка в `~/.config/ymd/config.toml`:
+
+```toml
+[playback]
+quality = "lossless"   # lossless | hq | nq | lq
+fallback_hq = true
+```
+
 ## Быстрый старт (P0)
 
 ~~~bash

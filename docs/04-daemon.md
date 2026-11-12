@@ -326,3 +326,26 @@ CLI: `ymd download <id> [--quality]`, `ymd cache list|path|remove|info`.
 подсветкой текущей строки по `positionMs`.
 
 Детали и матрица проверок — `notes/lyrics-findings.md`.
+
+
+## Качество звука (lossless)
+
+Проверено на аккаунте: `lossless` доступен и отдаётся как **FLAC в MP4**
+(`codec=flac-mp4`), `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
+
+Настройка — `~/.config/ymd/config.toml`:
+
+```toml
+[playback]
+quality = "lossless"   # lossless | hq | nq | lq
+fallback_hq = true     # если lossless недоступен — играть в hq
+
+[cache]
+limit_mb = 2048
+```
+
+`quality` читается при каждом резолве URL, поэтому смена не требует перезапуска
+(достаточно поставить следующий трек). Если запрошенное качество недоступно и
+`fallback_hq = true`, демон повторяет запрос в `hq` и пишет warn в лог.
+
+Логируется фактический выбор: `stream resolved track=… codec=flac-mp4`.

@@ -516,10 +516,19 @@ impl AppState {
             .parse()
             .map_err(|_| format!("нечисловой id: {track_id}"))?;
         let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
-        let stream = client
-            .stream(id, crate::api::Quality::Hq)
-            .await
-            .map_err(|err| err.to_string())?;
+        let wanted = crate::config::quality();
+        let stream = match client.stream(id, wanted).await {
+            Ok(stream) => stream,
+            Err(err) if wanted != crate::api::Quality::Hq && crate::config::fallback_hq() => {
+                tracing::warn!(track = %track_id, error = %err, "quality unavailable, falling back to hq");
+                client
+                    .stream(id, crate::api::Quality::Hq)
+                    .await
+                    .map_err(|err| err.to_string())?
+            }
+            Err(err) => return Err(err.to_string()),
+        };
+        tracing::info!(track = %track_id, codec = %stream.codec, bitrate = stream.bitrate, "stream resolved");
         Ok(stream.url)
     }
 

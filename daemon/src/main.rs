@@ -11,6 +11,7 @@ mod media;
 mod mpris;
 mod oauth;
 mod cache;
+mod config;
 mod player;
 mod mpris_server;
 mod session;
