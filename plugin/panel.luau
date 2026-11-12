@@ -17,6 +17,8 @@ local s = {
   query = "",
   results = {},
   queue = {},
+  repeat = "all",
+  shuffle = false,
   hint = "",
 }
 
@@ -155,6 +157,17 @@ local function search_input()
   })
 end
 
+local function mode_row()
+  local repeat_text = ({ off = "Повтор: выкл", all = "Повтор: все", one = "Повтор: один" })[s.repeat]
+    or "Повтор: все"
+  local shuffle_text = s.shuffle and "Перемешать: вкл" or "Перемешать: выкл"
+
+  return ui.row({ gap = 6 }, {
+    ui.button({ text = repeat_text, onClick = "ym_repeat", width = 130 }),
+    ui.button({ text = shuffle_text, onClick = "ym_shuffle", width = 140 }),
+  })
+end
+
 local function render()
   panel.render(ui.column({ gap = 8, padding = 12, fill = "surface", radius = 10 }, {
     header(),
@@ -166,6 +179,7 @@ local function render()
       track = "surface_variant",
     }),
     transport(),
+    mode_row(),
     ui.separator({}),
     search_input(),
     results_block(),
@@ -196,6 +210,8 @@ local function apply(state)
 
   local queue = state.queue or {}
   s.queue = queue.items or {}
+  s.repeat = queue.repeat or "all"
+  s.shuffle = queue.shuffle == true
 end
 
 local function refresh()
@@ -233,6 +249,15 @@ function ym_queue_1() play_queue(1) end
 function ym_queue_2() play_queue(2) end
 function ym_queue_3() play_queue(3) end
 function ym_queue_4() play_queue(4) end
+
+function ym_repeat()
+  local next_mode = ({ off = "all", all = "one", one = "off" })[s.repeat] or "all"
+  ymd.cmd_payload("repeat", { value = next_mode }, function() refresh() end)
+end
+
+function ym_shuffle()
+  ymd.cmd_payload("shuffle", { value = not s.shuffle }, function() refresh() end)
+end
 
 function ym_submit(value)
   local text = value

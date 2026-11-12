@@ -27,6 +27,8 @@ pub struct Track {
     pub duration_ms: u64,
     #[serde(default)]
     pub liked: bool,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 impl Track {
@@ -44,6 +46,8 @@ pub struct QueueItem {
     pub artists: Vec<String>,
     #[serde(default)]
     pub duration_ms: u64,
+    #[serde(default)]
+    pub cover: Option<String>,
 }
 
 impl From<&Track> for QueueItem {
@@ -53,6 +57,7 @@ impl From<&Track> for QueueItem {
             title: track.title.clone(),
             artists: track.artists.clone(),
             duration_ms: track.duration_ms,
+            cover: track.cover.clone(),
         }
     }
 }
@@ -75,7 +80,7 @@ impl Default for Queue {
             length: 0,
             index: 0,
             shuffle: false,
-            repeat: "off".to_string(),
+            repeat: "all".to_string(),
         }
     }
 }
@@ -148,6 +153,9 @@ pub struct AppState {
     player: Option<Arc<crate::player::Player>>,
     /// true, когда звук идёт из локального плеера.
     local: Arc<AtomicBool>,
+    /// true, после первого успешного запуска локального плеера: с этого момента
+    /// внешний MPRIS больше не подменяет состояние.
+    owned: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -159,6 +167,7 @@ impl AppState {
             external: Arc::new(AtomicBool::new(false)),
             player: None,
             local: Arc::new(AtomicBool::new(false)),
+            owned: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -171,6 +180,11 @@ impl AppState {
 
     pub fn is_local(&self) -> bool {
         self.local.load(Ordering::Relaxed)
+    }
+
+    /// Плеер демона уже использовался — внешний MPRIS не должен перехватывать.
+    pub fn owns_output(&self) -> bool {
+        self.owned.load(Ordering::Relaxed)
     }
 
     pub fn snapshot(&self) -> State {
@@ -252,8 +266,20 @@ impl AppState {
                 }
                 "play_track" => {
                     let track = track_from_payload(payload)?;
-                    st.queue.items.push(QueueItem::from(&track));
-                    st.queue.index = st.queue.items.len() - 1;
+                    // Уже в очереди — переключаемся, иначе ставим сразу после текущего.
+                    let index = match st.queue.items.iter().position(|item| item.id == track.id) {
+                        Some(index) => index,
+                        None => {
+                            let at = if st.queue.items.is_empty() {
+                                0
+                            } else {
+                                st.queue.index + 1
+                            };
+                            st.queue.items.insert(at, QueueItem::from(&track));
+                            at
+                        }
+                    };
+                    st.queue.index = index;
                     st.queue.sync_length();
                     st.track = Some(track);
                     st.position_ms = 0;
@@ -313,16 +339,53 @@ impl AppState {
                         player.seek_ms(st.position_ms);
                     }
                 }
+                "repeat" => {
+                    let value = payload
+                        .and_then(|v| v.get("value"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "repeat: нужно value".to_string())?;
+                    if !matches!(value, "off" | "all" | "one") {
+                        return Err(format!("repeat: неизвестный режим {value}"));
+                    }
+                    st.queue.repeat = value.to_string();
+                }
+                "shuffle" => {
+                    let value = payload
+                        .and_then(|v| v.get("value"))
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| "shuffle: нужно value".to_string())?;
+                    st.queue.shuffle = value;
+                }
+                "queue_remove" => {
+                    let index = payload
+                        .and_then(|v| v.get("index"))
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| "queue_remove: нужен index".to_string())?
+                        as usize;
+                    if index >= st.queue.items.len() {
+                        return Err(format!("queue_remove: нет индекса {index}"));
+                    }
+                    st.queue.items.remove(index);
+                    if st.queue.index > index {
+                        st.queue.index -= 1;
+                    }
+                    if st.queue.index >= st.queue.items.len() {
+                        st.queue.index = st.queue.items.len().saturating_sub(1);
+                    }
+                    st.queue.sync_length();
+                }
                 other => return Err(format!("unknown op: {other}")),
             }
 
             // Появился URL потока — отдаём его локальному плееру.
-            if matches!(op, "play_track" | "queue_play" | "next" | "prev") {
+            // Если очередь закончилась (repeat=off), не запускаем звук заново.
+            if st.status != "stopped" && matches!(op, "play_track" | "queue_play" | "next" | "prev") {
                 if let Some(url) = payload.and_then(|v| v.get("url")).and_then(Value::as_str) {
                     if let Some(player) = &self.player {
                         match player.load(url) {
                             Ok(()) => {
                                 self.local.store(true, Ordering::Relaxed);
+                                self.owned.store(true, Ordering::Relaxed);
                                 st.status = "playing".to_string();
                             }
                             Err(err) => tracing::warn!("player load: {err}"),
@@ -331,14 +394,21 @@ impl AppState {
                 }
             }
 
-            // Локальный плеер — источник истины по статусу.
+            // Конец очереди без повтора: гасим звук и выходим из локального режима.
+            if st.status == "stopped" && self.is_local() {
+                if let Some(player) = &self.player {
+                    player.stop();
+                }
+                self.local.store(false, Ordering::Relaxed);
+            }
+
+            // Локальный плеер — источник истины по статусу, но во время
+            // буферизации не сбрасываем в paused.
             if self.is_local() {
                 if let Some(player) = &self.player {
-                    st.status = if player.is_playing() {
-                        "playing".to_string()
-                    } else {
-                        "paused".to_string()
-                    };
+                    if player.is_playing() || player.is_buffering() {
+                        st.status = "playing".to_string();
+                    }
                 }
             }
 
@@ -428,13 +498,15 @@ impl AppState {
                 Ok(guard) => guard,
                 Err(_) => return 0,
             };
-            let status = if self
-                .player
-                .as_ref()
-                .map(|p| p.is_playing())
-                .unwrap_or(false)
-            {
+            let player = self.player.as_ref();
+            let active = player
+                .map(|p| p.is_playing() || p.is_buffering())
+                .unwrap_or(false);
+            // «stopped» ставится командой (конец очереди, stop) — не воскрешаем его.
+            let status = if active {
                 "playing"
+            } else if st.status == "stopped" {
+                "stopped"
             } else {
                 "paused"
             };
@@ -513,6 +585,7 @@ impl AppState {
                 album: snapshot.album,
                 duration_ms: snapshot.duration_ms,
                 liked: false,
+                cover: None,
             });
 
             if changed {
@@ -540,7 +613,12 @@ impl AppState {
                 ticker.tick().await;
 
                 // Локальный плеер главнее: он и звук, и позиция.
-                if app.is_local() {
+                // После первого запуска внешний MPRIS не подхватывает эстафету.
+                if app.is_local() || app.owns_output() {
+                    if !app.is_local() {
+                        app.sync_local(0);
+                        continue;
+                    }
                     let eos = app
                         .player
                         .as_ref()
@@ -597,11 +675,46 @@ fn advance(state: &mut State, delta: isize) {
         state.position_ms = 0;
         return;
     }
-    let len_i = len as isize;
-    let index = (state.queue.index as isize + delta).rem_euclid(len_i) as usize;
+
+    // repeat=one: повтор текущего трека (только вперёд).
+    if delta > 0 && state.queue.repeat == "one" {
+        state.position_ms = 0;
+        return;
+    }
+
+    let index = if delta > 0 && state.queue.shuffle && len > 1 {
+        let mut next = state.queue.index;
+        while next == state.queue.index {
+            next = pseudo_random() % len;
+        }
+        next
+    } else {
+        let raw = state.queue.index as isize + delta;
+        if state.queue.repeat == "all" {
+            raw.rem_euclid(len as isize) as usize
+        } else if raw < 0 {
+            0
+        } else if raw as usize >= len {
+            // Конец очереди без повтора.
+            state.position_ms = 0;
+            state.status = "stopped".to_string();
+            return;
+        } else {
+            raw as usize
+        }
+    };
+
     state.queue.index = index;
     state.track = Some(track_from_queue_item(&state.queue.items[index]));
     state.position_ms = 0;
+}
+
+fn pseudo_random() -> usize {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize)
+        .unwrap_or(0)
 }
 
 fn track_from_queue_item(item: &QueueItem) -> Track {
@@ -612,6 +725,7 @@ fn track_from_queue_item(item: &QueueItem) -> Track {
         album: None,
         duration_ms: item.duration_ms,
         liked: false,
+        cover: item.cover.clone(),
     }
 }
 
@@ -653,6 +767,9 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
     let album = field("album")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let cover = field("cover")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     Ok(Track {
         id,
@@ -661,6 +778,7 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         album,
         duration_ms,
         liked: false,
+        cover,
     })
 }
 
@@ -687,6 +805,7 @@ mod tests {
             album: None,
             duration_ms: 1000,
             liked: false,
+            cover: None,
         });
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"positionMs\""));
@@ -724,6 +843,58 @@ mod tests {
         app.command("seek", Some(&serde_json::json!({ "positionMs": 999_999 })))
             .unwrap();
         assert_eq!(app.snapshot().position_ms, 184_000);
+    }
+
+    #[test]
+    fn play_track_reuses_existing_queue_entry() {
+        let app = AppState::new();
+        app.command("play_track", Some(&track_json())).unwrap();
+        app.command("play_track", Some(&track_json())).unwrap();
+
+        let state = app.snapshot();
+        assert_eq!(state.queue.items.len(), 1, "трек не должен дублироваться");
+        assert_eq!(state.queue.index, 0);
+    }
+
+    #[test]
+    fn repeat_one_keeps_track_on_next() {
+        let app = AppState::new();
+        app.command("play_track", Some(&track_json())).unwrap();
+        app.command("enqueue", Some(&track_json())).unwrap();
+        app.command("repeat", Some(&serde_json::json!({ "value": "one" })))
+            .unwrap();
+
+        let before = app.snapshot();
+        app.command("next", None).unwrap();
+        let after = app.snapshot();
+        assert_eq!(before.queue.index, after.queue.index);
+        assert_eq!(after.position_ms, 0);
+    }
+
+    #[test]
+    fn repeat_off_stops_at_queue_end() {
+        let app = AppState::new();
+        app.command("play_track", Some(&track_json())).unwrap();
+        app.command("repeat", Some(&serde_json::json!({ "value": "off" })))
+            .unwrap();
+
+        app.command("next", None).unwrap();
+        let state = app.snapshot();
+        assert_eq!(state.status, "stopped");
+    }
+
+    #[test]
+    fn queue_remove_shifts_index() {
+        let app = AppState::new();
+        app.command("play_track", Some(&track_json())).unwrap();
+        app.command("enqueue", Some(&track_json())).unwrap();
+        app.command("queue_remove", Some(&serde_json::json!({ "index": 0 })))
+            .unwrap();
+
+        let state = app.snapshot();
+        assert_eq!(state.queue.items.len(), 1);
+        assert_eq!(state.queue.index, 0);
+        assert_eq!(state.queue.length, 1);
     }
 
     #[test]

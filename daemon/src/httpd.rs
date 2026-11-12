@@ -176,6 +176,12 @@ fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
                 .pointer("/albums/0/title")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string);
+            // coverUri приходит как "avatars.yandex.net/get-music-content/.../%%".
+            let cover = item
+                .get("coverUri")
+                .or_else(|| item.pointer("/albums/0/coverUri"))
+                .and_then(serde_json::Value::as_str)
+                .map(|uri| format!("https://{}", uri.replace("%%", "400x400")));
 
             Some(serde_json::json!({
                 "id": id,
@@ -184,6 +190,7 @@ fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
                 "album": album,
                 "durationMs": duration_ms,
                 "liked": false,
+                "cover": cover,
             }))
         })
         .collect()

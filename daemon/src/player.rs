@@ -112,6 +112,13 @@ impl Player {
         self.playbin.current_state() == gst::State::Playing
     }
 
+    /// Пайплайн ещё переходит в Playing (буферизация, открытие потока).
+    /// В этот момент `is_playing()` уже false, но пауза ещё не наступила.
+    pub fn is_buffering(&self) -> bool {
+        let (result, _current, _pending) = self.playbin.state(gst::ClockTime::ZERO);
+        matches!(result, Ok(gst::StateChangeSuccess::Async))
+    }
+
     /// Забирает сообщения шины и сообщает, дошло ли до конца потока.
     pub fn poll_eos(&self) -> bool {
         let Some(bus) = self.playbin.bus() else {

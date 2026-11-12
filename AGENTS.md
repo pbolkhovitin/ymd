@@ -69,7 +69,8 @@ M1 в работе: API-клиент, `ymd search/track/album/artist`, MPRIS-м�
 
 M2 готов: собственный плеер (GStreamer `playbin3` → PipeWire) и исходящий MPRIS.
 `playerctl --player=ymd` управляет демоном, медиа-клавиши работают.
-Дальше: очередь из панели с автопереходом, обложки, офлайн-кэш (M3).
+Очередь: автопереход, `repeat/shuffle/queue_remove`, обложки в состоянии.
+Дальше: обложки в UI (пропы `ui.image`), офлайн-кэш (M3).
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
 клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.
