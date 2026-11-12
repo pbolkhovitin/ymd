@@ -137,6 +137,11 @@ pub fn enforce_limit(keep: &str) -> Result<Vec<String>, String> {
 }
 
 /// Есть ли трек в кэше.
+/// Запись индекса для трека (без проверки файла).
+pub fn entry_for(track_id: &str) -> Option<Entry> {
+    load_index().items.get(track_id).cloned()
+}
+
 pub fn is_cached(track_id: &str) -> bool {
     path_for(track_id).is_some()
 }

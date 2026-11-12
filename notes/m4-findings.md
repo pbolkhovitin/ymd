@@ -84,3 +84,18 @@ wave_more          → queue 5 → 10, batchId обновился
 
 Фоллбэк `hq` при недоступном lossless реализован, но живьём не воспроизведён:
 не нашлось трека без flac на plus-аккаунте.
+
+
+## Качество в панели (проверено)
+
+| Проверка | Результат |
+|---|---|
+| `ymd quality` при пустом конфиге | `lossless`, фоллбэк в hq: да |
+| `POST /v1/cmd {"op":"quality","payload":{"value":"nq"}}` | `{"ok":true}`, `ymd quality` → `nq`, конфиг перезаписан |
+| `/v1/state` после смены | `quality=nq`, `codec=None` (трека ещё нет) |
+| `play_track` при `nq` | `playing nq aac-mp4`, позиция растёт |
+| возврат на `lossless` | `ymd quality` → `lossless` |
+| панель | открылась (`panel manager: opened`), ошибок Luau нет |
+
+Начальное значение `quality` в состоянии берётся из конфига в `AppState::new`,
+поэтому панель не врёт до первого трека.

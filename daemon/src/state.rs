@@ -137,6 +137,16 @@ pub struct State {
     /// Сессия радио, если включена «Моя волна».
     #[serde(default)]
     pub wave: Option<WaveInfo>,
+    /// Фактическое качество текущего потока (`lossless`, `hq`, …).
+    #[serde(default = "default_quality_label")]
+    pub quality: String,
+    /// Кодек текущего потока (`flac-mp4`, `aac256-mp4`, …).
+    #[serde(default)]
+    pub codec: Option<String>,
+}
+
+fn default_quality_label() -> String {
+    "lossless".to_string()
 }
 
 impl Default for State {
@@ -151,8 +161,17 @@ impl Default for State {
             env: EnvState::default(),
             ui: UiState::default(),
             wave: None,
+            quality: default_quality_label(),
+            codec: None,
         }
     }
+}
+
+/// Результат резолва потока: URL плюс фактические качество и кодек.
+struct ResolvedStream {
+    url: String,
+    quality: String,
+    codec: String,
 }
 
 /// Общий стейт демона. Дешёвый клон: внутри `Arc`.
@@ -176,8 +195,11 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(CHANNEL_CAPACITY);
+        let mut state = State::default();
+        // Панель должна показывать качество из конфига ещё до первого трека.
+        state.quality = crate::config::load().playback.quality;
         Self {
-            inner: Arc::new(RwLock::new(State::default())),
+            inner: Arc::new(RwLock::new(state)),
             tx,
             external: Arc::new(AtomicBool::new(false)),
             player: None,
@@ -276,6 +298,14 @@ impl AppState {
                     st.wave = None;
                 }
                 "wave" => {}
+                "quality" => {
+                    let value = payload
+                        .and_then(|p| p.get("value"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "quality: нужен value".to_string())?;
+                    crate::config::set_quality(value)?;
+                    st.quality = value.to_string();
+                }
                 "mode" => {
                     st.ui.mode = if st.ui.mode == "full" {
                         "compact".to_string()
@@ -487,13 +517,27 @@ impl AppState {
             return self.command(op, payload);
         };
 
-        let url = match self.resolve_url(&track_id).await {
-            Ok(url) => Some(url),
+        let resolved = match self.resolve_url(&track_id).await {
+            Ok(resolved) => Some(resolved),
             Err(err) => {
                 tracing::warn!("stream resolve ({track_id}): {err}");
                 None
             }
         };
+
+        // Качество и кодек показываем в состоянии (панель, отладка).
+        if let Some(resolved) = &resolved {
+            if let Ok(mut st) = self.inner.write() {
+                let changed = st.quality != resolved.quality
+                    || st.codec.as_deref() != Some(resolved.codec.as_str());
+                if changed {
+                    st.quality = resolved.quality.clone();
+                    st.codec = Some(resolved.codec.clone());
+                    st.rev += 1;
+                }
+            }
+        }
+        let url = resolved.map(|resolved| resolved.url);
 
         let mut owned = payload
             .cloned()
@@ -505,11 +549,18 @@ impl AppState {
         self.command(op, Some(&owned))
     }
 
-    async fn resolve_url(&self, track_id: &str) -> Result<String, String> {
+    async fn resolve_url(&self, track_id: &str) -> Result<ResolvedStream, String> {
         // Офлайн-кэш приоритетнее сети: локальный файл играет без токена и сети.
         if let Some(path) = crate::cache::path_for(track_id) {
             tracing::debug!(track = %track_id, file = %path.display(), "play from cache");
-            return Ok(format!("file://{}", path.display()));
+            let (quality, codec) = crate::cache::entry_for(track_id)
+                .map(|entry| (entry.quality, entry.codec))
+                .unwrap_or_else(|| ("cache".to_string(), String::new()));
+            return Ok(ResolvedStream {
+                url: format!("file://{}", path.display()),
+                quality,
+                codec,
+            });
         }
 
         let id: u64 = track_id
@@ -517,19 +568,24 @@ impl AppState {
             .map_err(|_| format!("нечисловой id: {track_id}"))?;
         let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
         let wanted = crate::config::quality();
-        let stream = match client.stream(id, wanted).await {
-            Ok(stream) => stream,
+        let (stream, used) = match client.stream(id, wanted).await {
+            Ok(stream) => (stream, wanted),
             Err(err) if wanted != crate::api::Quality::Hq && crate::config::fallback_hq() => {
                 tracing::warn!(track = %track_id, error = %err, "quality unavailable, falling back to hq");
-                client
+                let stream = client
                     .stream(id, crate::api::Quality::Hq)
                     .await
-                    .map_err(|err| err.to_string())?
+                    .map_err(|err| err.to_string())?;
+                (stream, crate::api::Quality::Hq)
             }
             Err(err) => return Err(err.to_string()),
         };
         tracing::info!(track = %track_id, codec = %stream.codec, bitrate = stream.bitrate, "stream resolved");
-        Ok(stream.url)
+        Ok(ResolvedStream {
+            url: stream.url,
+            quality: used.as_str().to_string(),
+            codec: stream.codec,
+        })
     }
 
     /// Включена ли «Моя волна».

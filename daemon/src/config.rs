@@ -94,6 +94,43 @@ pub fn fallback_hq() -> bool {
     load().playback.fallback_hq
 }
 
+/// Записывает качество в конфиг, сохраняя остальные ключи.
+pub fn set_quality(value: &str) -> Result<(), String> {
+    if Quality::parse(value).is_none() {
+        return Err(format!(
+            "неизвестное качество: {value} (lossless|hq|nq|lq)"
+        ));
+    }
+
+    let path = path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    }
+
+    let mut root: toml::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: ожидалась таблица".to_string())?;
+    let playback = table
+        .entry("playback")
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let playback = playback
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: [playback] должна быть таблицей".to_string())?;
+    playback.insert(
+        "quality".to_string(),
+        toml::Value::String(value.to_string()),
+    );
+
+    let text = toml::to_string_pretty(&root).map_err(|err| err.to_string())?;
+    std::fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

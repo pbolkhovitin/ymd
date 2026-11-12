@@ -22,6 +22,8 @@ local s = {
   queue = {},
   loop_mode = "all",
   shuffle = false,
+  quality = "lossless",
+  codec = nil,
   hint = "",
 }
 
@@ -87,6 +89,18 @@ local function track_line(item)
   return prefix .. short(item.title, budget)
 end
 
+local QUALITY_LABELS = {
+  lossless = "FLAC",
+  hq = "AAC 256",
+  nq = "AAC 192",
+  lq = "AAC 64",
+  cache = "кэш",
+}
+
+local function quality_label()
+  return QUALITY_LABELS[s.quality] or s.quality
+end
+
 local function header()
   return ui.row({ gap = 8, align = "center" }, {
     ui.label({
@@ -101,7 +115,11 @@ local function header()
       fontSize = 14,
     }),
     ui.spacer({}),
-    ui.label({ text = s.status, color = "on_surface_variant", fontSize = 11 }),
+    ui.label({
+      text = s.status .. " · " .. quality_label(),
+      color = "on_surface_variant",
+      fontSize = 11,
+    }),
   })
 end
 
@@ -207,7 +225,12 @@ local function mode_row()
 
   return ui.row({ gap = 6 }, {
     ui.button({ text = repeat_text, onClick = "ym_repeat", width = 130 }),
-    ui.button({ text = shuffle_text, onClick = "ym_shuffle", width = 140 }),
+    ui.button({ text = shuffle_text, onClick = "ym_shuffle", width = 120 }),
+    ui.button({
+      text = "Качество: " .. quality_label(),
+      onClick = "ym_quality",
+      width = 150,
+    }),
   })
 end
 
@@ -263,6 +286,8 @@ local function apply(state)
   s.queue = queue.items or {}
   s.loop_mode = queue["repeat"] or "all"
   s.shuffle = queue.shuffle == true
+  s.quality = state.quality or s.quality
+  s.codec = state.codec
 end
 
 local function refresh()
@@ -360,6 +385,23 @@ end
 
 function hidePanel()
   noctalia.togglePanel("pbolkhovitin/yandex-music:panel")
+end
+
+local QUALITY_ORDER = { "lossless", "hq", "nq", "lq" }
+
+function ym_quality()
+  local current = s.quality
+  local next_quality = QUALITY_ORDER[1]
+  for index, value in ipairs(QUALITY_ORDER) do
+    if value == current then
+      next_quality = QUALITY_ORDER[(index % #QUALITY_ORDER) + 1]
+      break
+    end
+  end
+  s.quality = next_quality
+  ymd.cmd_payload("quality", { value = next_quality }, function()
+    render()
+  end)
 end
 
 function ym_wave()

@@ -52,6 +52,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Показать или изменить качество звука (применяется со следующего трека).
+    Quality {
+        /// lossless | hq | nq | lq
+        value: Option<String>,
+    },
     /// Отправить команду запущенному демону.
     Ctl {
         /// toggle | play | pause | next | prev | like | mode
@@ -183,6 +188,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Status { json, port } => status(json, port),
         Command::Wave { port, json } => wave_cmd(port, json),
+        Command::Quality { value } => {
+            match value {
+                Some(value) => {
+                    config::set_quality(&value)?;
+                    println!("качество: {value}");
+                }
+                None => {
+                    let cfg = config::load();
+                    let fallback = if cfg.playback.fallback_hq { "да" } else { "нет" };
+                    println!("качество: {}", cfg.playback.quality);
+                    println!("фоллбэк в hq: {fallback}");
+                }
+            }
+            Ok(())
+        }
         Command::Ctl { op, port } => ctl(&op, port),
         Command::Auth { cmd } => auth_cmd(cmd).await,
         Command::Search { text, page, json } => search_cmd(&text, page, json).await,

@@ -328,6 +328,23 @@ CLI: `ymd download <id> [--quality]`, `ymd cache list|path|remove|info`.
 Детали и матрица проверок — `notes/lyrics-findings.md`.
 
 
+### Качество в состоянии
+
+`/v1/state` отдаёт `quality` (запрошенное/фактическое качество: `lossless`,
+`hq`, `nq`, `lq`, `cache`) и `codec` (`flac-mp4`, `aac256-mp4`, …). Поля
+обновляются при резолве каждого трека, поэтому панель показывает именно то,
+что играет, а не только то, что записано в конфиге.
+
+Смена на лету — команда `quality {value}` (пишет `[playback] quality` в
+`~/.config/ymd/config.toml`, применяется со следующего трека):
+
+```bash
+ymd quality            # показать текущее
+ymd quality hq         # переключить
+curl -X POST localhost:8765/v1/cmd -H "X-YMD-Session: $KEY" \
+  -H 'content-type: application/json' -d '{"op":"quality","payload":{"value":"nq"}}'
+```
+
 ## Качество звука (lossless)
 
 Проверено на аккаунте: `lossless` доступен и отдаётся как **FLAC в MP4**
