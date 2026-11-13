@@ -4,8 +4,9 @@
 //! состояния — собственный GStreamer-плеер; внешний MPRIS используется как
 //! резервный, пока локальный плеер не взял управление.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -165,6 +166,9 @@ pub struct State {
     /// Активные и завершённые скачивания (для индикатора прогресса).
     #[serde(default)]
     pub downloads: Vec<Download>,
+    /// Сколько треков ждёт в очереди на скачивание.
+    #[serde(default)]
+    pub download_pending: u64,
 }
 
 fn default_quality_label() -> String {
@@ -186,6 +190,7 @@ impl Default for State {
             quality: default_quality_label(),
             codec: None,
             downloads: Vec::new(),
+            download_pending: 0,
         }
     }
 }
@@ -213,6 +218,10 @@ pub struct AppState {
     owned: Arc<AtomicBool>,
     /// Защита от параллельных догрузок «Моей волны».
     wave_pending: Arc<AtomicBool>,
+    /// Треки, ждущие последовательной загрузки.
+    download_queue: Arc<Mutex<VecDeque<Track>>>,
+    /// Один воркер скачивания; true, пока он жив.
+    download_worker: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -229,6 +238,8 @@ impl AppState {
             local: Arc::new(AtomicBool::new(false)),
             owned: Arc::new(AtomicBool::new(false)),
             wave_pending: Arc::new(AtomicBool::new(false)),
+            download_queue: Arc::new(Mutex::new(VecDeque::new())),
+            download_worker: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -562,6 +573,7 @@ impl AppState {
             "wave_more" => return self.wave_more().await,
             "wave_feedback" => return self.wave_feedback(payload).await,
             "download_track" => return self.download_track(payload).await,
+            "download_tracks" => return self.download_tracks(payload).await,
             _ => {}
         }
 
@@ -655,41 +667,155 @@ impl AppState {
         self.command(op, Some(&owned))
     }
 
-    /// Ставит трек в очередь на скачивание и возвращает ревизию сразу.
-    /// Прогресс виден в `state.downloads`, готовность — в `cached`.
+    /// Ставит один трек в очередь на скачивание.
     async fn download_track(&self, payload: Option<&Value>) -> Result<u64, String> {
         let source = payload.and_then(|v| v.get("track")).or(payload);
         let track = track_from_payload(source)?;
-        let id = track.id.clone();
+        self.enqueue_downloads(vec![track]).await
+    }
 
-        if crate::cache::is_cached(&id) {
+    /// Ставит в очередь все треки плейлиста, пропуская уже известные.
+    async fn download_tracks(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let items = payload
+            .and_then(|v| v.get("tracks"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "нет списка треков".to_string())?;
+        let mut tracks = Vec::new();
+        for item in items {
+            if let Ok(track) = track_from_payload(Some(item)) {
+                tracks.push(track);
+            }
+        }
+        if tracks.is_empty() {
+            return Err("нет треков для скачивания".to_string());
+        }
+        self.enqueue_downloads(tracks).await
+    }
+
+    async fn enqueue_downloads(&self, tracks: Vec<Track>) -> Result<u64, String> {
+        let mut added = 0;
+        {
+            let mut queue = self
+                .download_queue
+                .lock()
+                .map_err(|_| "download queue lock poisoned".to_string())?;
             let mut st = self
                 .inner
                 .write()
                 .map_err(|_| "state lock poisoned".to_string())?;
+            let cached: std::collections::HashSet<String> = crate::cache::list()
+                .into_iter()
+                .map(|entry| entry.id)
+                .collect();
+            let mut known: std::collections::HashSet<String> =
+                queue.iter().map(|track| track.id.clone()).collect();
+            known.extend(
+                st.downloads
+                    .iter()
+                    .filter(|item| item.state == "downloading")
+                    .map(|item| item.id.clone()),
+            );
+            for track in tracks {
+                if cached.contains(&track.id) || known.contains(&track.id) {
+                    continue;
+                }
+                known.insert(track.id.clone());
+                queue.push_back(track);
+                added += 1;
+            }
+            st.download_pending = queue.len() as u64;
+            // Обновляем `cached` и при пустом добавлении: пользователь мог
+            // нажать «скачать» на уже готовом треке.
             refresh_cached(&mut st);
             st.rev += 1;
             let snapshot = st.clone();
             drop(st);
+            drop(queue);
             self.publish(&snapshot);
-            return Ok(snapshot.rev);
         }
+        if added > 0 {
+            self.ensure_download_worker();
+        }
+        Ok(self.snapshot().rev)
+    }
 
+    fn ensure_download_worker(&self) {
+        if self
+            .download_worker
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
         {
-            let mut st = self
-                .inner
-                .write()
-                .map_err(|_| "state lock poisoned".to_string())?;
-            if st
-                .downloads
-                .iter()
-                .any(|item| item.id == id && item.state == "downloading")
-            {
-                return Ok(st.rev);
+            return;
+        }
+        let app = self.clone();
+        tokio::spawn(async move {
+            app.download_worker_loop().await;
+        });
+    }
+
+    /// Один воркер качает треки строго последовательно.
+    async fn download_worker_loop(&self) {
+        loop {
+            let Some(track) = self.next_download() else {
+                self.download_worker.store(false, Ordering::SeqCst);
+                // Закрываем гонку: enqueue мог прийти между pop_front и сбросом флага.
+                if !self
+                    .download_queue
+                    .lock()
+                    .map(|queue| queue.is_empty())
+                    .unwrap_or(true)
+                {
+                    self.ensure_download_worker();
+                }
+                return;
+            };
+            let id = track.id.clone();
+            let client = match crate::api::Client::from_store() {
+                Ok(client) => client,
+                Err(err) => {
+                    finish_download(self, &id, Err(err.to_string()));
+                    continue;
+                }
+            };
+            let quality = crate::config::quality();
+            let progress_app = self.clone();
+            let progress_id = id.clone();
+            let result = crate::cache::download(
+                &client,
+                &track,
+                quality,
+                move |bytes, total| {
+                    if let Ok(mut st) = progress_app.inner.write() {
+                        if let Some(item) = st
+                            .downloads
+                            .iter_mut()
+                            .find(|item| item.id == progress_id)
+                        {
+                            item.bytes = bytes;
+                            item.total = total;
+                        }
+                    }
+                },
+            )
+            .await;
+
+            match result {
+                Ok(entry) => finish_download(self, &id, Ok((entry.bytes, entry.bytes))),
+                Err(err) => finish_download(self, &id, Err(err)),
             }
-            st.downloads.retain(|item| item.id != id);
+        }
+    }
+
+    /// Берёт следующий трек и сразу показывает его в `state.downloads`.
+    fn next_download(&self) -> Option<Track> {
+        let mut queue = self.download_queue.lock().ok()?;
+        let track = queue.pop_front()?;
+        let pending = queue.len() as u64;
+        let snapshot = self.inner.write().ok().map(|mut st| {
+            st.download_pending = pending;
+            st.downloads.retain(|item| item.id != track.id);
             st.downloads.push(Download {
-                id: id.clone(),
+                id: track.id.clone(),
                 title: track.title.clone(),
                 state: "downloading".to_string(),
                 bytes: 0,
@@ -701,48 +827,13 @@ impl AppState {
                 st.downloads.drain(0..excess);
             }
             st.rev += 1;
-            let snapshot = st.clone();
-            drop(st);
+            st.clone()
+        });
+        drop(queue);
+        if let Some(snapshot) = snapshot {
             self.publish(&snapshot);
         }
-
-        let app = self.clone();
-        tokio::spawn(async move {
-            let client = match crate::api::Client::from_store() {
-                Ok(client) => client,
-                Err(err) => {
-                    finish_download(&app, &id, Err(err.to_string()));
-                    return;
-                }
-            };
-            let quality = crate::config::quality();
-            let progress_app = app.clone();
-            let progress_id = id.clone();
-            let result = crate::cache::download(&client, &track, quality, move |bytes, total| {
-                if let Ok(mut st) = progress_app.inner.write() {
-                    if let Some(item) = st
-                        .downloads
-                        .iter_mut()
-                        .find(|item| item.id == progress_id)
-                    {
-                        item.bytes = bytes;
-                        item.total = total;
-                    }
-                }
-            })
-            .await;
-
-            match result {
-                Ok(entry) => finish_download(
-                    &app,
-                    &id,
-                    Ok((entry.bytes, entry.bytes)),
-                ),
-                Err(err) => finish_download(&app, &id, Err(err)),
-            }
-        });
-
-        Ok(self.snapshot().rev)
+        Some(track)
     }
 
     async fn resolve_url(&self, track_id: &str) -> Result<ResolvedStream, String> {
@@ -1358,9 +1449,11 @@ mod tests {
             cover: None,
             cached: false,
         });
+        state.download_pending = 3;
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"positionMs\""));
         assert!(json.contains("\"durationMs\""));
+        assert!(json.contains("\"downloadPending\":3"));
         assert!(!json.contains("position_ms"));
     }
 
