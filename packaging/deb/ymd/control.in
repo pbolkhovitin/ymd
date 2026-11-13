@@ -1,0 +1,12 @@
+Source: ymd
+Package: ymd
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Pavel Bolkhovitin <pbolkhovitin@yandex.ru>
+Depends: @SHLIBS@, libsecret-tools, playerctl, dbus-user-session
+Recommends: gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-libav, gstreamer1.0-pipewire, pipewire, wireplumber
+Description: Yandex Music daemon for KDE Plasma
+ Local HTTP API, GStreamer playback, MPRIS export, offline cache and
+ "My Wave" for the Yandex Music Plasma plasmoid.

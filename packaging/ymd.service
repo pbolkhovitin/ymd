@@ -1,5 +1,5 @@
 [Unit]
-Description=ymd — Yandex Music daemon (Noctalia/niri)
+Description=ymd — Yandex Music daemon (KDE Plasma 6)
 Documentation=https://github.com/pbolkhovitin/ym-noctalia
 # Звук: нужен PipeWire (GStreamer идёт в него через autoaudiosink).
 After=pipewire.service wireplumber.service

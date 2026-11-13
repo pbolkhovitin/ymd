@@ -1,0 +1,11 @@
+Package: plasma-widget-ymd
+Version: @VERSION@
+Section: kde
+Priority: optional
+Architecture: all
+Maintainer: Pavel Bolkhovitin <pbolkhovitin@yandex.ru>
+Depends: plasma-workspace (>= 4:6.0), qml6-module-org-kde-kirigami, qml6-module-org-kde-plasma-plasma5support
+Recommends: ymd
+Description: Yandex Music plasmoid for KDE Plasma 6
+ Compact panel widget and popup with search, queue, transport and
+ "My Wave" controls. Requires the ymd daemon for playback.
