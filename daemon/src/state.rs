@@ -29,6 +29,8 @@ pub struct Track {
     pub liked: bool,
     #[serde(default)]
     pub cover: Option<String>,
+    #[serde(default)]
+    pub cached: bool,
 }
 
 impl Track {
@@ -48,6 +50,8 @@ pub struct QueueItem {
     pub duration_ms: u64,
     #[serde(default)]
     pub cover: Option<String>,
+    #[serde(default)]
+    pub cached: bool,
 }
 
 impl From<&Track> for QueueItem {
@@ -58,6 +62,7 @@ impl From<&Track> for QueueItem {
             artists: track.artists.clone(),
             duration_ms: track.duration_ms,
             cover: track.cover.clone(),
+            cached: track.cached,
         }
     }
 }
@@ -114,6 +119,20 @@ impl Default for UiState {
     }
 }
 
+/// Прогресс скачивания трека в офлайн-кэш.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Download {
+    pub id: String,
+    pub title: String,
+    /// `downloading` | `done` | `error`.
+    pub state: String,
+    pub bytes: u64,
+    pub total: u64,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 /// Состояние сессии «Моей волны».
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +162,9 @@ pub struct State {
     /// Кодек текущего потока (`flac-mp4`, `aac256-mp4`, …).
     #[serde(default)]
     pub codec: Option<String>,
+    /// Активные и завершённые скачивания (для индикатора прогресса).
+    #[serde(default)]
+    pub downloads: Vec<Download>,
 }
 
 fn default_quality_label() -> String {
@@ -163,6 +185,7 @@ impl Default for State {
             wave: None,
             quality: default_quality_label(),
             codec: None,
+            downloads: Vec::new(),
         }
     }
 }
@@ -362,6 +385,66 @@ impl AppState {
                     st.queue.index = 0;
                     st.queue.sync_length();
                 }
+                "queue_set" => {
+                    let tracks = payload
+                        .and_then(|v| v.get("tracks"))
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| "queue_set: нужен tracks".to_string())?;
+                    if tracks.is_empty() {
+                        return Err("queue_set: пустой список треков".to_string());
+                    }
+                    let mut items = Vec::with_capacity(tracks.len());
+                    for value in tracks {
+                        let mut track = track_from_payload(Some(value))?;
+                        // Флаги кэша обновим одним проходом по индексу ниже.
+                        track.cached = false;
+                        items.push(QueueItem::from(&track));
+                    }
+                    st.queue.items = items;
+                    st.queue.sync_length();
+                    let index = payload
+                        .and_then(|v| v.get("index"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    if index >= st.queue.items.len() {
+                        return Err(format!("queue_set: нет индекса {index}"));
+                    }
+                    st.queue.index = index;
+                    refresh_cached(&mut st);
+                    if payload
+                        .and_then(|v| v.get("play"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        st.track = Some(track_from_queue_item(&st.queue.items[index]));
+                        st.position_ms = 0;
+                        st.status = "playing".to_string();
+                    }
+                }
+                "cache_remove" => {
+                    let id = payload
+                        .and_then(|v| v.get("id"))
+                        .and_then(value_to_id)
+                        .ok_or_else(|| "cache_remove: нужен id".to_string())?;
+                    crate::cache::remove(&id)?;
+                    refresh_cached(&mut st);
+                }
+                "cache_clear" => {
+                    crate::cache::clear()?;
+                    refresh_cached(&mut st);
+                }
+                "cache_limit" => {
+                    let limit = payload
+                        .and_then(|v| {
+                            v.get("limitMb")
+                                .or_else(|| v.get("limit_mb"))
+                                .and_then(Value::as_u64)
+                        })
+                        .ok_or_else(|| "cache_limit: нужен limitMb".to_string())?;
+                    crate::config::set_cache_limit(limit)?;
+                    crate::cache::enforce_limit("")?;
+                    refresh_cached(&mut st);
+                }
                 "volume" => {
                     let value = payload
                         .and_then(|v| v.get("value"))
@@ -428,7 +511,9 @@ impl AppState {
 
             // Появился URL потока — отдаём его локальному плееру.
             // Если очередь закончилась (repeat=off), не запускаем звук заново.
-            if st.status != "stopped" && matches!(op, "play_track" | "queue_play" | "next" | "prev") {
+            if st.status != "stopped"
+                && matches!(op, "play_track" | "queue_play" | "queue_set" | "next" | "prev")
+            {
                 if let Some(url) = payload.and_then(|v| v.get("url")).and_then(Value::as_str) {
                     if let Some(player) = &self.player {
                         match player.load(url) {
@@ -476,10 +561,19 @@ impl AppState {
             "wave_start" => return self.wave_start().await,
             "wave_more" => return self.wave_more().await,
             "wave_feedback" => return self.wave_feedback(payload).await,
+            "download_track" => return self.download_track(payload).await,
             _ => {}
         }
 
-        let needs_url = matches!(op, "play_track" | "queue_play" | "next" | "prev");
+        let play_requested = payload
+            .and_then(|v| v.get("play"))
+            .and_then(Value::as_bool)
+            .unwrap_or(op != "queue_set");
+        let needs_url = play_requested
+            && matches!(
+                op,
+                "play_track" | "queue_play" | "queue_set" | "next" | "prev"
+            );
         if !needs_url || self.player.is_none() {
             return self.command(op, payload);
         }
@@ -496,6 +590,18 @@ impl AppState {
                         .get(index as usize)
                         .map(|item| item.id.clone())
                 }),
+            "queue_set" => payload
+                .and_then(|v| v.get("tracks"))
+                .and_then(Value::as_array)
+                .and_then(|tracks| {
+                    let index = payload
+                        .and_then(|v| v.get("index"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize;
+                    tracks.get(index)
+                })
+                .and_then(|v| v.get("id"))
+                .and_then(value_to_id),
             _ => {
                 let state = self.snapshot();
                 let len = state.queue.items.len();
@@ -547,6 +653,96 @@ impl AppState {
         }
 
         self.command(op, Some(&owned))
+    }
+
+    /// Ставит трек в очередь на скачивание и возвращает ревизию сразу.
+    /// Прогресс виден в `state.downloads`, готовность — в `cached`.
+    async fn download_track(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let source = payload.and_then(|v| v.get("track")).or(payload);
+        let track = track_from_payload(source)?;
+        let id = track.id.clone();
+
+        if crate::cache::is_cached(&id) {
+            let mut st = self
+                .inner
+                .write()
+                .map_err(|_| "state lock poisoned".to_string())?;
+            refresh_cached(&mut st);
+            st.rev += 1;
+            let snapshot = st.clone();
+            drop(st);
+            self.publish(&snapshot);
+            return Ok(snapshot.rev);
+        }
+
+        {
+            let mut st = self
+                .inner
+                .write()
+                .map_err(|_| "state lock poisoned".to_string())?;
+            if st
+                .downloads
+                .iter()
+                .any(|item| item.id == id && item.state == "downloading")
+            {
+                return Ok(st.rev);
+            }
+            st.downloads.retain(|item| item.id != id);
+            st.downloads.push(Download {
+                id: id.clone(),
+                title: track.title.clone(),
+                state: "downloading".to_string(),
+                bytes: 0,
+                total: 0,
+                error: None,
+            });
+            if st.downloads.len() > 20 {
+                let excess = st.downloads.len() - 20;
+                st.downloads.drain(0..excess);
+            }
+            st.rev += 1;
+            let snapshot = st.clone();
+            drop(st);
+            self.publish(&snapshot);
+        }
+
+        let app = self.clone();
+        tokio::spawn(async move {
+            let client = match crate::api::Client::from_store() {
+                Ok(client) => client,
+                Err(err) => {
+                    finish_download(&app, &id, Err(err.to_string()));
+                    return;
+                }
+            };
+            let quality = crate::config::quality();
+            let progress_app = app.clone();
+            let progress_id = id.clone();
+            let result = crate::cache::download(&client, &track, quality, move |bytes, total| {
+                if let Ok(mut st) = progress_app.inner.write() {
+                    if let Some(item) = st
+                        .downloads
+                        .iter_mut()
+                        .find(|item| item.id == progress_id)
+                    {
+                        item.bytes = bytes;
+                        item.total = total;
+                    }
+                }
+            })
+            .await;
+
+            match result {
+                Ok(entry) => finish_download(
+                    &app,
+                    &id,
+                    Ok((entry.bytes, entry.bytes)),
+                ),
+                Err(err) => finish_download(&app, &id, Err(err)),
+            }
+        });
+
+        Ok(self.snapshot().rev)
     }
 
     async fn resolve_url(&self, track_id: &str) -> Result<ResolvedStream, String> {
@@ -805,6 +1001,7 @@ impl AppState {
                 duration_ms: snapshot.duration_ms,
                 liked: false,
                 cover: None,
+                cached: false,
             });
 
             if changed {
@@ -889,6 +1086,46 @@ impl Default for AppState {
     }
 }
 
+/// Завершает запись о скачивании и обновляет флаги `cached`.
+fn finish_download(app: &AppState, id: &str, result: Result<(u64, u64), String>) {
+    let Ok(mut st) = app.inner.write() else {
+        return;
+    };
+    refresh_cached(&mut st);
+    if let Some(item) = st.downloads.iter_mut().find(|item| item.id == id) {
+        match result {
+            Ok((bytes, total)) => {
+                item.state = "done".to_string();
+                item.bytes = bytes;
+                item.total = total;
+                item.error = None;
+            }
+            Err(err) => {
+                item.state = "error".to_string();
+                item.error = Some(err);
+            }
+        }
+    }
+    st.rev += 1;
+    let snapshot = st.clone();
+    drop(st);
+    app.publish(&snapshot);
+}
+
+/// Обновляет `cached` у текущего трека и очереди по индексу кэша.
+fn refresh_cached(state: &mut State) {
+    let cached: std::collections::HashSet<String> = crate::cache::list()
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect();
+    for item in &mut state.queue.items {
+        item.cached = cached.contains(&item.id);
+    }
+    if let Some(track) = state.track.as_mut() {
+        track.cached = cached.contains(&track.id);
+    }
+}
+
 /// Приводит id из JSON (строка или число) к строке.
 fn value_to_id(value: &Value) -> Option<String> {
     value
@@ -955,6 +1192,7 @@ fn track_from_queue_item(item: &QueueItem) -> Track {
         duration_ms: item.duration_ms,
         liked: false,
         cover: item.cover.clone(),
+        cached: item.cached,
     }
 }
 
@@ -1039,6 +1277,7 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
                 .and_then(cover_url)
         });
 
+    let cached = crate::cache::is_cached(&id);
     Ok(Track {
         id,
         title,
@@ -1047,6 +1286,7 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         duration_ms,
         liked: false,
         cover,
+        cached,
     })
 }
 
@@ -1116,6 +1356,7 @@ mod tests {
             duration_ms: 1000,
             liked: false,
             cover: None,
+            cached: false,
         });
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"positionMs\""));

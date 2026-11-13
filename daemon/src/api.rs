@@ -199,10 +199,17 @@ impl Client {
         Ok(unwrap_result(value))
     }
 
-    #[allow(dead_code)]
     pub async fn playlists(&self, uid: u64) -> Result<Value, ApiError> {
         let value = self
             .get(&format!("/users/{uid}/playlists/list"), &[])
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Полный плейлист пользователя: метаданные и треки.
+    pub async fn playlist(&self, uid: u64, kind: u64) -> Result<Value, ApiError> {
+        let value = self
+            .get(&format!("/users/{uid}/playlists/{kind}"), &[])
             .await?;
         Ok(unwrap_result(value))
     }

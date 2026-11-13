@@ -94,6 +94,18 @@ pub fn remove(track_id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Удаляет все файлы кэша и записи индекса. Возвращает число треков.
+pub fn clear() -> Result<usize, String> {
+    let mut index = load_index();
+    let count = index.items.len();
+    for entry in index.items.values() {
+        let _ = fs::remove_file(dir().join(&entry.file));
+    }
+    index.items.clear();
+    save_index(&index)?;
+    Ok(count)
+}
+
 /// Лимит кэша из `~/.config/ymd/config.toml` (`[cache] limit_mb`).
 pub fn limit_bytes() -> u64 {
     crate::config::load().cache.limit_mb * 1024 * 1024

@@ -131,6 +131,36 @@ pub fn set_quality(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Записывает лимит кэша в мегабайтах, сохраняя остальные ключи.
+pub fn set_cache_limit(limit_mb: u64) -> Result<(), String> {
+    let limit = i64::try_from(limit_mb).map_err(|_| "слишком большой лимит".to_string())?;
+
+    let path = path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    }
+
+    let mut root: toml::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: ожидалась таблица".to_string())?;
+    let cache = table
+        .entry("cache")
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    let cache = cache
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: [cache] должна быть таблицей".to_string())?;
+    cache.insert("limit_mb".to_string(), toml::Value::Integer(limit));
+
+    let text = toml::to_string_pretty(&root).map_err(|err| err.to_string())?;
+    std::fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

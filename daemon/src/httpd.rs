@@ -44,6 +44,9 @@ pub async fn serve(
         .route("/v1/health", get(health))
         .route("/v1/state", get(get_state))
         .route("/v1/search", get(search))
+        .route("/v1/playlists", get(playlists))
+        .route("/v1/playlist", get(playlist))
+        .route("/v1/cache", get(cache_info))
         .route("/v1/cmd", post(cmd))
         .route("/v1/events", get(events))
         .with_state(shared);
@@ -139,62 +142,208 @@ async fn search(
     })))
 }
 
+/// `GET /v1/playlists` — плейлисты текущего пользователя.
+async fn playlists(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err((StatusCode::UNAUTHORIZED, "bad session".to_string()));
+    }
+
+    let account = crate::auth::load_account()
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "нет аккаунта".to_string()))?;
+    let client = crate::api::Client::from_store()
+        .map_err(|err| (StatusCode::SERVICE_UNAVAILABLE, err.to_string()))?;
+    let value = client
+        .playlists(account.uid)
+        .await
+        .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
+
+    let playlists: Vec<serde_json::Value> = value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("available").and_then(serde_json::Value::as_bool) != Some(false))
+                .map(|item| simplify_playlist(item, account.uid))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({ "playlists": playlists })))
+}
+
+#[derive(Deserialize)]
+struct PlaylistParams {
+    uid: u64,
+    kind: u64,
+}
+
+/// `GET /v1/playlist?uid=...&kind=...` — метаданные и треки плейлиста.
+async fn playlist(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+    Query(params): Query<PlaylistParams>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err((StatusCode::UNAUTHORIZED, "bad session".to_string()));
+    }
+
+    let client = crate::api::Client::from_store()
+        .map_err(|err| (StatusCode::SERVICE_UNAVAILABLE, err.to_string()))?;
+    let value = client
+        .playlist(params.uid, params.kind)
+        .await
+        .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
+
+    let tracks: Vec<serde_json::Value> = value
+        .get("tracks")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.iter().filter_map(simplify_track).collect())
+        .unwrap_or_default();
+    let meta = simplify_playlist(&value, params.uid);
+
+    Ok(Json(serde_json::json!({
+        "playlist": meta,
+        "tracks": tracks,
+    })))
+}
+
+/// `GET /v1/cache` — содержимое офлайн-кэша и лимит.
+async fn cache_info(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&headers, &shared.key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(serde_json::json!({
+        "items": crate::cache::list(),
+        "totalBytes": crate::cache::total_bytes(),
+        "limitBytes": crate::cache::limit_bytes(),
+        "dir": crate::cache::dir().display().to_string(),
+    })))
+}
+
 /// Приводит ответ `/search` к плоскому списку треков для плагина.
 fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
-    let items = value
+    value
         .pointer("/tracks/results")
         .or_else(|| value.pointer("/result/tracks/results"))
         .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+        .map(|items| items.iter().filter_map(simplify_track).collect())
+        .unwrap_or_default()
+}
 
-    items
-        .iter()
-        .filter_map(|item| {
-            let id = item.get("id")?.as_u64()?.to_string();
-            let title = item
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("Без названия")
-                .to_string();
-            let artists: Vec<String> = item
-                .get("artists")
-                .and_then(serde_json::Value::as_array)
-                .map(|artists| {
-                    artists
-                        .iter()
-                        .filter_map(|a| a.get("name").and_then(serde_json::Value::as_str))
-                        .map(str::to_string)
-                        .collect()
+/// Плоский трек для UI. Понимает и полный объект трека, и обёртку
+/// `{ "track": {...} }` из плейлиста.
+fn simplify_track(item: &serde_json::Value) -> Option<serde_json::Value> {
+    let item = item.get("track").unwrap_or(item);
+    let id = item
+        .get("id")
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        })?;
+    let title = item
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Без названия")
+        .to_string();
+    let artists: Vec<String> = item
+        .get("artists")
+        .and_then(serde_json::Value::as_array)
+        .map(|artists| {
+            artists
+                .iter()
+                .filter_map(|a| {
+                    a.as_str().map(str::to_string).or_else(|| {
+                        a.get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                    })
                 })
-                .unwrap_or_default();
-            let duration_ms = item
-                .get("durationMs")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let album = item
-                .pointer("/albums/0/title")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string);
-            // coverUri приходит как "avatars.yandex.net/get-music-content/.../%%".
-            let cover = item
-                .get("coverUri")
-                .or_else(|| item.pointer("/albums/0/coverUri"))
-                .and_then(serde_json::Value::as_str)
-                .and_then(crate::state::cover_url);
-
-            Some(serde_json::json!({
-                "id": id,
-                "title": title,
-                "artists": artists,
-                "album": album,
-                "durationMs": duration_ms,
-                "liked": false,
-                "cover": cover,
-                "cached": crate::cache::is_cached(&id),
-            }))
+                .collect()
         })
-        .collect()
+        .unwrap_or_default();
+    let duration_ms = item
+        .get("durationMs")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let album = item
+        .get("album")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            item.pointer("/albums/0/title")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        });
+    // coverUri приходит как "avatars.yandex.net/get-music-content/.../%%".
+    let cover = item
+        .get("coverUri")
+        .or_else(|| item.pointer("/albums/0/coverUri"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::state::cover_url);
+
+    Some(serde_json::json!({
+        "id": id,
+        "title": title,
+        "artists": artists,
+        "album": album,
+        "durationMs": duration_ms,
+        "liked": false,
+        "cover": cover,
+        "cached": crate::cache::is_cached(&id),
+    }))
+}
+
+/// Метаданные плейлиста для списка и шапки. Обложка-мозаика берётся из
+/// `cover.itemsUri[0]`, кастомная — из `cover.uri`.
+fn simplify_playlist(item: &serde_json::Value, fallback_uid: u64) -> serde_json::Value {
+    let uid = item
+        .get("uid")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(fallback_uid);
+    let kind = item
+        .get("kind")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let title = item
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Плейлист")
+        .to_string();
+    let track_count = item
+        .get("trackCount")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            item.get("tracks")
+                .and_then(serde_json::Value::as_array)
+                .map(|tracks| tracks.len() as u64)
+        })
+        .unwrap_or(0);
+    let duration_ms = item
+        .get("durationMs")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cover = item
+        .pointer("/cover/uri")
+        .or_else(|| item.pointer("/cover/itemsUri/0"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::state::cover_url);
+
+    serde_json::json!({
+        "id": format!("{uid}:{kind}"),
+        "uid": uid,
+        "kind": kind,
+        "title": title,
+        "trackCount": track_count,
+        "cover": cover,
+        "durationMs": duration_ms,
+    })
 }
 
 async fn events(
@@ -261,4 +410,50 @@ pub fn status_line(response: &str) -> &str {
 
 pub fn body_of(response: &str) -> &str {
     response.split("\r\n\r\n").nth(1).unwrap_or("")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playlist_cover_and_id_are_normalized() {
+        let value = serde_json::json!({
+            "uid": 42,
+            "kind": 1036,
+            "title": "Мой плейлист",
+            "trackCount": 12,
+            "cover": {
+                "type": "mosaic",
+                "itemsUri": ["avatars.yandex.net/get-music-content/1/2/%%"]
+            }
+        });
+        let playlist = simplify_playlist(&value, 42);
+        assert_eq!(playlist["id"], "42:1036");
+        assert_eq!(playlist["trackCount"], 12);
+        assert_eq!(
+            playlist["cover"],
+            "https://avatars.yandex.net/get-music-content/1/2/400x400"
+        );
+    }
+
+    #[test]
+    fn playlist_track_unwraps_wrapper() {
+        let value = serde_json::json!({
+            "id": 123,
+            "track": {
+                "id": 7,
+                "title": "Трек",
+                "artists": [{ "name": "Артист" }],
+                "albums": [{ "title": "Альбом", "coverUri": "avatars/%%" }],
+                "durationMs": 180000
+            }
+        });
+        let track = simplify_track(&value).unwrap();
+        assert_eq!(track["id"], "7");
+        assert_eq!(track["artists"][0], "Артист");
+        assert_eq!(track["album"], "Альбом");
+        assert_eq!(track["durationMs"], 180000);
+        assert_eq!(track["cover"], "https://avatars/400x400");
+    }
 }
