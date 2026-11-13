@@ -13,6 +13,20 @@ Item {
     implicitWidth: row.implicitWidth + Kirigami.Units.smallSpacing * 2
     implicitHeight: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing * 2
 
+    Rectangle {
+        anchors.fill: parent
+        radius: Kirigami.Units.smallSpacing
+        color: Qt.rgba(Kirigami.Theme.backgroundColor.r,
+                       Kirigami.Theme.backgroundColor.g,
+                       Kirigami.Theme.backgroundColor.b,
+                       0.45)
+        border.width: 1
+        border.color: Qt.rgba(Kirigami.Theme.textColor.r,
+                              Kirigami.Theme.textColor.g,
+                              Kirigami.Theme.textColor.b,
+                              0.35)
+    }
+
     RowLayout {
         id: row
         anchors.centerIn: parent
@@ -22,7 +36,6 @@ Item {
             source: "audio-x-generic"
             implicitWidth: Kirigami.Units.iconSizes.smallMedium
             implicitHeight: Kirigami.Units.iconSizes.smallMedium
-            color: Kirigami.Theme.textColor
         }
 
         PlasmaComponents3.Label {
