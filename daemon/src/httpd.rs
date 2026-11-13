@@ -486,7 +486,14 @@ async fn config_patch(
 
     crate::config::patch(quality, fallback, limit)
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("config: {err}")))?;
-    shared.app.refresh();
+    // Качество отражается в состоянии сразу: клиенты читают его из /v1/state.
+    if let Some(value) = quality {
+        let _ = shared
+            .app
+            .command("quality", Some(&serde_json::json!({ "value": value })));
+    } else {
+        shared.app.refresh();
+    }
     Ok(Json(crate::config::as_json()))
 }
 
