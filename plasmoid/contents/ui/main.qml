@@ -112,7 +112,42 @@ PlasmoidItem {
         xhr.send(JSON.stringify({ op: op, payload: payload || {} }));
     }
 
-    function search(text) { /* implemented in Task 4 */ }
+    function search(text) {
+        var query = String(text || "").trim();
+        searchHint = "";
+        if (!query) {
+            searchResults = [];
+            return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", baseUrl() + "/v1/search?q=" + encodeURIComponent(query));
+        xhr.setRequestHeader("X-YMD-Session", sessionKey);
+        xhr.timeout = 5000;
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status === 200) {
+                try {
+                    var data = JSON.parse(xhr.responseText);
+                    searchResults = data.tracks || [];
+                    searchHint = searchResults.length ? "" : "Ничего не найдено";
+                } catch (e) {
+                    searchResults = [];
+                    searchHint = "Некорректный ответ поиска";
+                }
+            } else if (xhr.status === 401) {
+                searchHint = "Ключ устарел";
+                keyRetried = true;
+                sessionKey = "";
+                keyReady = false;
+                requestKey();
+            } else {
+                searchResults = [];
+                searchHint = "Поиск недоступен (HTTP " + xhr.status + ")";
+            }
+        };
+        xhr.ontimeout = function() { searchHint = "Поиск не отвечает"; };
+        xhr.send();
+    }
     function seek(ms) { cmd("seek", { positionMs: Math.round(ms) }); }
     function cycleQuality() { cmd("quality", { value: Format.qualityNext(quality) }); }
 

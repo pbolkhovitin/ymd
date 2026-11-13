@@ -164,6 +164,59 @@ Item {
             Item { Layout.fillWidth: true }
         }
 
+        PlasmaComponents3.TextField {
+            id: searchField
+            Layout.fillWidth: true
+            placeholderText: "Поиск"
+            onAccepted: applet.search(text)
+        }
+
+        Repeater {
+            model: applet.searchResults.slice(0, 4)
+            delegate: TrackRow {
+                item: modelData
+                onClicked: applet.cmd("play_track", modelData)
+            }
+        }
+
+        PlasmaComponents3.Label {
+            Layout.fillWidth: true
+            text: applet.searchResults.length === 0 && applet.searchHint === ""
+                ? "Введите запрос"
+                : applet.searchHint
+            opacity: 0.7
+            visible: text !== ""
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            height: 1
+            color: Kirigami.Theme.disabledTextColor
+            opacity: 0.3
+        }
+
+        PlasmaComponents3.Label {
+            text: "Очередь"
+            font.bold: true
+        }
+
+        Repeater {
+            model: applet.queueItems.slice(0, 4)
+            delegate: TrackRow {
+                item: modelData
+                rowIndex: index
+                showIndex: true
+                current: index === applet.queueIndex
+                onClicked: applet.cmd("queue_play", { index: index })
+            }
+        }
+
+        PlasmaComponents3.Label {
+            text: "Очередь пуста"
+            opacity: 0.7
+            visible: applet.queueItems.length === 0
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
