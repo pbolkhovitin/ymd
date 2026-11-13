@@ -11,7 +11,7 @@ plasmoid (QML) ──HTTP/JSON──> ymd ──HTTPS──> Яндекс Муз
       │                         │
       └── ymd session-key       ├── GStreamer → PipeWire
                                 ├── MPRIS (zbus)
-                                └── ~/.local/share/ymd/cache
+                                └── ~/.local/share/ymd/media
 ```
 
 ## Состав workspace
@@ -55,8 +55,8 @@ plasmoid/             QML-плазмоид Plasma 6
 HTTP-клиент с заголовками `x-yandex-music-client`, `x-yandex-music-device`,
 `accept-language`; ретраи 429/5xx; толерантный разбор JSON.
 
-Реализовано: `search`, `track`, `album`, `artist`, `playlists`, `likes`,
-`stream`, `encraw`, `wave_start`, `wave_more`, `wave_feedback`.
+Реализовано: `search`, `track`, `album`, `artist`, `playlists`, `playlist`,
+`likes`, `stream`, `encraw`, `wave_start`, `wave_more`, `wave_feedback`.
 
 Прямой поток: `/get-file-info` с парой «заголовок клиента + ключ», ответ —
 `result.downloadInfo.url` (CDN `strm.yandex.net`). Качества: `lossless` →
@@ -92,15 +92,18 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 
 ### `cache`
 
-Каталог `~/.local/share/ymd/cache/`, индекс `index.json`. Загрузка `encraw`
+Каталог `~/.local/share/ymd/media/`, индекс `index.json`. Загрузка `encraw`
 чанками по 1 МиБ, расшифровка AES-128-CTR (`counter = offset/16`,
 `skip = offset%16`), запись `.part` → итоговый файл. `resolve_url` сначала
 проверяет кэш и отдаёт `file://…`, поэтому скачанный трек играет без сети.
 
-CLI: `ymd download <id>`, `ymd download-album <id>`, `ymd cache list|path|
-remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) проверяется после
-каждой загрузки, старые записи вытесняются по `at`. Докачка после обрыва
-пока начинается с нуля.
+Скачивание доступно из CLI (`ymd download`, `ymd download-album`), из окна
+`ymd-qt` (кнопка `⤓`) и командой `download_track`. HTTP-запрос не блокируется:
+прогресс публикуется в `state.downloads`, а по завершении обновляется флаг
+`cached` у трека и очереди. Лимит `[cache] limit_mb` (по умолчанию 2048)
+проверяется после каждой загрузки, старые записи вытесняются по `at`;
+изменить лимит можно командой `cache_limit`. Докачка после обрыва пока
+начинается с нуля.
 
 ### `session`
 
@@ -125,6 +128,9 @@ remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) пр�
 | GET | `/v1/health` | `{ok, version, uptime_s, state_rev}` без ключа |
 | GET | `/v1/state` | снимок состояния (camelCase) |
 | GET | `/v1/search?q=…&page=…` | `{query, tracks:[…]}` |
+| GET | `/v1/playlists` | `{playlists:[…]}` — плейлисты текущего пользователя |
+| GET | `/v1/playlist?uid=…&kind=…` | `{playlist, tracks:[…]}` |
+| GET | `/v1/cache` | `{items, totalBytes, limitBytes, dir}` |
 | POST | `/v1/cmd` | `{op, payload}` → `{ok, rev}` |
 | GET | `/v1/events` | SSE-поток состояний (для отладки) |
 
@@ -138,14 +144,18 @@ remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) пр�
   "status": "playing",
   "track": {
     "id": "123", "title": "…", "artists": ["…"], "album": "…",
-    "durationMs": 214000, "liked": false, "cover": "https://…"
+    "durationMs": 214000, "liked": false, "cover": "https://…",
+    "cached": false
   },
   "positionMs": 42000,
   "volume": 0.8,
   "queue": {
-    "items": [{"id":"…","title":"…","artists":["…"],"durationMs":0,"cover":null}],
+    "items": [{"id":"…","title":"…","artists":["…"],"durationMs":0,"cover":null,"cached":false}],
     "length": 1, "index": 0, "shuffle": false, "repeat": "all"
   },
+  "downloads": [
+    {"id":"…","title":"…","state":"downloading","bytes":1048576,"total":3993120,"error":null}
+  ],
   "env": {"fullscreen": false, "overview": false, "idle": false, "onBattery": false},
   "ui": {"mode": "full"},
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
@@ -157,7 +167,9 @@ remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) пр�
 `quality`/`codec` — фактическое качество текущего потока, а не только
 значение из конфига. `wave` отсутствует, если волна не запущена. `cover` —
 всегда полный URL: `coverUri` из API (`%%` заменяется на `400x400`) или
-готовый URL, присланный UI.
+готовый URL, присланный UI. `cached` показывает, есть ли трек в офлайн-кэше.
+`downloads` — активные и последние завершённые загрузки (`state`:
+`downloading|done|error`).
 
 ### Команды
 
@@ -172,13 +184,20 @@ remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) пр�
 | `enqueue` | объект трека |
 | `queue_play`, `queue_remove` | `{"index":0}` |
 | `queue_clear` | — |
+| `queue_set` | `{"tracks":[…],"index":0,"play":true}` — заменить очередь |
+| `download_track` | `{"track":{…}}` — асинхронно скачать в кэш |
+| `cache_remove` | `{"id":"123"}` |
+| `cache_clear` | — |
+| `cache_limit` | `{"limitMb":2048}` |
 | `volume` | `{"value":0.0…1.0}` |
 | `seek` | `{"positionMs":42000}` |
 | `repeat` | `{"value":"off|all|one"}` |
 | `shuffle` | `{"value":true}` |
 
 `wave_start`/`wave_more`/`wave_feedback` — асинхронные: сначала резолвят
-радио-сессию, затем меняют очередь.
+радио-сессию, затем меняют очередь. `queue_set` с `play: true` тоже
+резолвит поток и запускает трек. `download_track` сразу отвечает `{ok, rev}`,
+а загрузка идёт в фоне: прогресс виден в `state.downloads`.
 
 ## Конфигурация
 

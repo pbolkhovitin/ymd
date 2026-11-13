@@ -61,11 +61,11 @@
 
 | Файл | Назначение |
 |---|---|
-| `main.qml` | `PlasmoidItem`: ключ, polling, команды, поиск |
+| `main.qml` | `PlasmoidItem`: ключ, polling, команды, поиск, плейлисты |
 | `CompactRepresentation.qml` | компакт в панели: иконка, «Трек — Артист», клики/колесо |
-| `FullRepresentation.qml` | попап: обложка, seek, громкость, транспорт, режимы, поиск, очередь |
+| `FullRepresentation.qml` | попап: обложка, seek, громкость, транспорт, режимы, поиск, плейлисты, очередь, скачивание |
 | `TrackRow.qml` | строка трека для результатов и очереди |
-| `format.js` | чистые функции: обрезка, время, качество, repeat |
+| `format.js` | чистые функции: обрезка, время, качество, repeat, cached-маркер |
 
 Плазмоид — один QML-пакет; отдельного процесса и второй VM нет.
 
@@ -73,12 +73,12 @@
 
 | Файл | Назначение |
 |---|---|
-| `src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling, команды, поиск, 401-retry |
+| `src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling, команды, поиск, плейлисты, кэш, 401-retry |
 | `src/tray.{h,cpp}` | `KStatusNotifierItem`: окно, play/pause, next/prev, выход |
-| `src/main.cpp` | `QApplication`, связка QML ↔ клиент ↔ трей |
-| `qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь |
-| `qml/TrackRow.qml` | строка трека |
-| `qml/format.js` | копия `plasmoid/contents/ui/format.js` |
+| `src/main.cpp` | `QApplication`, тема KDE, связка QML ↔ клиент ↔ трей |
+| `qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, плейлисты, кэш |
+| `qml/TrackRow.qml` | строка трека с кнопкой скачивания |
+| `qml/format.js` | общие функции форматирования, включая размеры кэша |
 
 Приложение — тонкий клиент: не хранит токен и не обращается к API Яндекса.
 Закрытие окна прячет его в трей; воспроизведение остаётся в демоне.
@@ -98,6 +98,9 @@
 | GET | `/v1/health` | `{ok, version, uptime}` без ключа |
 | GET | `/v1/state` | снимок состояния |
 | GET | `/v1/search?q=&page=` | поиск, `{query, tracks: [...]}` |
+| GET | `/v1/playlists` | плейлисты пользователя, `{playlists: [...]}` |
+| GET | `/v1/playlist?uid=&kind=` | плейлист и треки, `{playlist, tracks: [...]}` |
+| GET | `/v1/cache` | `{items, totalBytes, limitBytes, dir}` |
 | POST | `/v1/cmd` | `{op, payload}` — команда |
 | GET | `/v1/events` | SSE: события состояния (плазмоид не использует) |
 
@@ -110,14 +113,17 @@
   "track": {
     "id": "12345", "title": "Кино", "artists": ["MACAN"],
     "album": "…", "durationMs": 184000, "liked": true,
-    "cover": "https://…"
+    "cover": "https://…", "cached": false
   },
   "positionMs": 61000,
   "volume": 0.8,
   "queue": {
-    "items": [{"id": "…", "title": "…", "artists": ["…"], "durationMs": 184000, "cover": "…"}],
+    "items": [{"id": "…", "title": "…", "artists": ["…"], "durationMs": 184000, "cover": "…", "cached": false}],
     "length": 32, "index": 3, "shuffle": false, "repeat": "all"
   },
+  "downloads": [
+    {"id": "…", "title": "…", "state": "downloading", "bytes": 1048576, "total": 3993120, "error": null}
+  ],
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
   "quality": "lossless",
   "codec": "flac-mp4",
@@ -132,11 +138,14 @@
 
 `toggle`, `play`, `pause`, `stop`, `next`, `prev`, `like`, `wave_stop`, `wave`,
 `quality{value}`, `mode{value}`, `play_track{...track}`, `enqueue{...track}`,
-`queue_play{index}`, `queue_clear`, `queue_remove{index}`, `volume{value}`,
-`seek{positionMs}`, `repeat{value}`, `shuffle{value}`.
+`queue_play{index}`, `queue_set{tracks,index,play}`, `queue_clear`,
+`queue_remove{index}`, `volume{value}`, `seek{positionMs}`, `repeat{value}`,
+`shuffle{value}`, `download_track{track}`, `cache_remove{id}`, `cache_clear`,
+`cache_limit{limitMb}`.
 
 Асинхронные (резолвят поток через API): `wave_start`, `wave_more`,
-`wave_feedback{kind, trackId?}`.
+`wave_feedback{kind, trackId?}`, `download_track` (загрузка идёт в фоне,
+прогресс — в `state.downloads`).
 
 Ответ: `{ok, rev}`. Плазмоид после успешной команды сразу перечитывает
 `/v1/state`.
@@ -152,8 +161,9 @@ GStreamer → MPRIS `PlaybackStatus` → следующий polling забира
 **Поиск.** Плазмоид → `GET /v1/search?q=…` → демон подписывает запрос и ходит в
 API → `{tracks}` → четыре строки в попапе.
 
-**Офлайн.** `ymd download` → `encraw`-чанки → AES-128-CTR → файл + индекс;
-`resolve_url` отдаёт `file://` без сети.
+**Офлайн.** `ymd download` или кнопка `⤓` в UI → `download_track` → `encraw`-чанки
+→ AES-128-CTR → файл + индекс; `resolve_url` отдаёт `file://` без сети.
+Прогресс виден в `state.downloads`, лимит и LRU — через `cache_limit`.
 
 **Волна.** `wave_start` → `/rotor/session/new` → очередь заменяется партией;
 когда до конца остаётся один трек, тикер зовёт `wave_more`.

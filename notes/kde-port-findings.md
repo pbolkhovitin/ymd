@@ -95,6 +95,35 @@
   обложка и слайдер; `volume 0.35` → state 0.35; после wave — cover URL
   `https://avatars.yandex.net/.../400x400`.
 
+## Плейлисты, скачивание и кэш (2026-11-13)
+
+- Список плейлистов: `GET /users/{uid}/playlists/list` отдаёт массив, но без
+  треков. Треки доступны только через `GET /users/{uid}/playlists/{kind}`;
+  элементы — обёртки `{track: {...}}`. В демоне добавлены
+  `api::playlist(uid, kind)`, `GET /v1/playlists`, `GET /v1/playlist`,
+  `GET /v1/cache`.
+- `cover` плейлиста — мозаика `itemsUri` (или `uri`), нормализуется тем же
+  `cover_url` (`%%` → `400x400`). ID плейлиста — `uid:kind`.
+- В `Track`/`QueueItem` добавлен `cached`, в состояние — `downloads`
+  (`downloading|done|error`, bytes/total). Скачивание асинхронное:
+  `download_track` сразу отвечает, прогресс идёт в `state.downloads`.
+  Добавлены `queue_set`, `cache_remove`, `cache_clear`, `cache_limit`.
+- В Qt-окне — диалоги «Мои плейлисты» (27 шт., detail, «Играть») и
+  «Офлайн-кэш» (занято/лимит, список, удаление, очистка), кнопки `⤓` в
+  строках и у текущего трека, `Ctrl+P`/`Ctrl+K`. В попапе — ComboBox
+  плейлистов, «Играть» и скачивание текущего трека. Компакт не трогали:
+  обложка там по-прежнему не работает.
+- Причина светлого окна вне сессии Plasma — отсутствие
+  `XDG_CURRENT_DESKTOP=KDE`; `main.cpp` теперь выставляет его, если пусто.
+- Проверено на планшете: 27 плейлистов, `rock 80-90` — 207 треков;
+  `queue_set` играет; скачивание Queen «We Will Rock You» — 3 993 120 байт,
+  `cached=true`, `cache_remove` очищает, `cache_limit` меняет лимит.
+  Трек Bad Religion без прав вернул `403 no-rights` — ошибка видна в
+  `downloads`, HTTP не блокируется. Тесты демона: 32 passed.
+- Замечание: в индексе кэша `quality` берётся из настроек, а фактический
+  контейнер виден в `codec` (например, `quality=lossless`, `codec=aac-mp4`),
+  это не влияет на воспроизведение.
+
 ## Финальная проверка (2026-11-13)
 
 - `dist/ymd_0.2.0_amd64.deb`, `dist/ymd_0.2.0_arm64.deb`,
