@@ -1,5 +1,7 @@
 target/
 **/target/
+packaging/.cache/
+dist/
 *.log
 .DS_Store
 notes/local-*.md

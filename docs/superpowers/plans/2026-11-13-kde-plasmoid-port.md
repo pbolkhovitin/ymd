@@ -84,12 +84,16 @@ WORKDIR /work
 set -euo pipefail
 cd "$(dirname "$0")/.."
 arch=amd64
-mkdir -p "packaging/.cache/cargo-$arch" "packaging/.cache/target-$arch"
+# The repository lives on a CIFS mount without the executable bit, so cargo's
+# target directory must live on a local filesystem.
+cache_root="${YMD_CACHE_ROOT:-/var/tmp/opencode/ymd-cache}"
+mkdir -p "$cache_root/cargo-$arch" "$cache_root/target-$arch"
 docker build --platform linux/amd64 -t "ymd-builder:$arch" packaging
 docker run --rm --platform linux/amd64 \
   -u "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e CARGO_HOME="/work/packaging/.cache/cargo-$arch" \
-  -e CARGO_TARGET_DIR="/work/packaging/.cache/target-$arch" \
+  -e CARGO_HOME="/cache/cargo-$arch" \
+  -e CARGO_TARGET_DIR="/cache/target-$arch" \
+  -v "$cache_root:/cache" \
   -v "$PWD:/work" -w /work \
   "ymd-builder:$arch" cargo test "$@"
 ```
@@ -187,8 +191,9 @@ Run:
 ```bash
 docker run --rm --platform linux/amd64 \
   -u "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e CARGO_HOME="/work/packaging/.cache/cargo-amd64" \
-  -e CARGO_TARGET_DIR="/work/packaging/.cache/target-amd64" \
+  -e CARGO_HOME="/cache/cargo-amd64" \
+  -e CARGO_TARGET_DIR="/cache/target-amd64" \
+  -v "/var/tmp/opencode/ymd-cache:/cache" \
   -v "$PWD:/work" -w /work \
   ymd-builder:amd64 bash -c '
     mkdir -p /tmp/ymdtest/ymd
@@ -1029,12 +1034,14 @@ case "$arch" in
   *) echo "unsupported arch: $arch" >&2; exit 2 ;;
 esac
 
-mkdir -p "packaging/.cache/cargo-$arch" "packaging/.cache/target-$arch" dist
+cache_root="${YMD_CACHE_ROOT:-/var/tmp/opencode/ymd-cache}"
+mkdir -p "$cache_root/cargo-$arch" "$cache_root/target-$arch" dist
 docker build --platform "$platform" -t "ymd-builder:$arch" packaging
 docker run --rm --platform "$platform" \
   -u "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e CARGO_HOME="/work/packaging/.cache/cargo-$arch" \
-  -e CARGO_TARGET_DIR="/work/packaging/.cache/target-$arch" \
+  -e CARGO_HOME="/cache/cargo-$arch" \
+  -e CARGO_TARGET_DIR="/cache/target-$arch" \
+  -v "$cache_root:/cache" \
   -v "$PWD:/work" -w /work \
   "ymd-builder:$arch" bash packaging/in-docker.sh "$arch"
 ```

@@ -1,8 +1,8 @@
 //! Capability-ключ локального HTTP API.
 //!
-//! Файл `$XDG_RUNTIME_DIR/ymd/session.key`, права `0600`. Плагин читает его через
-//! `noctalia.readFile` и передаёт в заголовке `X-YMD-Session` — так управлять
-//! плеером может только процесс, у которого есть доступ к runtime-каталогу.
+//! Файл `$XDG_RUNTIME_DIR/ymd/session.key`, права `0600`. Плазмоид получает ключ
+//! командой `ymd session-key` и передаёт его в заголовке `X-YMD-Session` — так
+//! управлять плеером может только процесс с доступом к runtime-каталогу.
 
 use std::fs;
 use std::io::{Read, Write};

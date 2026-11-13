@@ -3,7 +3,7 @@
 use crate::session;
 
 pub fn run() {
-    println!("ymd doctor (P0 skeleton)");
+    println!("ymd doctor");
     println!("{}", "-".repeat(60));
 
     let key_present = session::read_key().ok().flatten().is_some();
@@ -13,20 +13,21 @@ pub fn run() {
         &session::key_path().display().to_string(),
     );
 
-    let niri = std::env::var("NIRI_SOCKET").unwrap_or_default();
-    let niri_ok = !niri.is_empty() && std::os::unix::net::UnixStream::connect(&niri).is_ok();
-    let niri_detail: &str = if niri.is_empty() {
-        "NIRI_SOCKET не задан (не niri-сессия?)"
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let kde = desktop.to_ascii_lowercase().contains("kde");
+    let desktop_detail = if desktop.is_empty() {
+        "XDG_CURRENT_DESKTOP не задан"
     } else {
-        niri.as_str()
+        desktop.as_str()
     };
-    row("niri socket", niri_ok, niri_detail);
+    row("KDE Plasma", kde, desktop_detail);
+    row("plasmashell", on_path("plasmashell"), "панель Plasma");
 
-    row("playerctl", on_path("playerctl"), "проверка MPRIS");
-    row("gst-launch-1.0", on_path("gst-launch-1.0"), "нужен для M1 (GStreamer)");
-    row("mpv", on_path("mpv"), "альтернативный backend");
-    row("secret-tool", on_path("secret-tool"), "libsecret CLI");
-    row("curl", on_path("curl"), "проверки SSE");
+    row("playerctl", on_path("playerctl"), "apt install playerctl");
+    row("gst-launch-1.0", on_path("gst-launch-1.0"), "apt install gstreamer1.0-tools");
+    row("mpv", on_path("mpv"), "опционально: apt install mpv");
+    row("secret-tool", on_path("secret-tool"), "apt install libsecret-tools");
+    row("curl", on_path("curl"), "проверки HTTP API");
 
     let port = 8765;
     let listening = std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
@@ -41,7 +42,7 @@ pub fn run() {
     );
 
     println!("{}", "-".repeat(60));
-    println!("warn — не ошибка: часть возможностей появится в M1/M2.");
+    println!("warn — не ошибка: без части пакетов доступны не все возможности.");
 }
 
 fn row(name: &str, ok: bool, detail: &str) {

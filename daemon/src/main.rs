@@ -1,7 +1,7 @@
-//! `ymd` — демон Яндекс Музыки (скелет P0).
+//! `ymd` — демон Яндекс Музыки для плазмоида KDE Plasma 6.
 //!
-//! P0-цель: проверить связку «плагин Noctalia → локальный HTTP/SSE → состояние».
-//! GStreamer, MPRIS и API Яндекса появятся в M1 (см. `docs/07-roadmap.md`).
+//! Демон владеет токеном, API, GStreamer-плеером, MPRIS и кэшем.
+//! Плазмоид общается с ним по локальному HTTP API (`127.0.0.1:8765`).
 
 mod api;
 mod auth;
@@ -22,7 +22,7 @@ use clap::{Parser, Subcommand};
 use crate::state::AppState;
 
 #[derive(Parser, Debug)]
-#[command(name = "ymd", version, about = "Yandex Music daemon (P0 skeleton)")]
+#[command(name = "ymd", version, about = "Yandex Music daemon for KDE Plasma 6")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -32,10 +32,12 @@ struct Cli {
 enum Command {
     /// Запустить демон (это же делает systemd --user).
     Serve {
-        /// Порт локального API для плагина.
+        /// Порт локального API для плазмоида.
         #[arg(long, default_value_t = 8765)]
         port: u16,
     },
+    /// Напечатать capability-ключ локального API (для плазмоида KDE).
+    SessionKey,
     /// Проверить окружение и напечатать отчёт.
     Doctor,
     /// Напечатать текущее состояние плеера.
@@ -181,6 +183,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
             httpd::serve(app, port, key).await
+        }
+        Command::SessionKey => {
+            println!("{}", key()?);
+            Ok(())
         }
         Command::Doctor => {
             doctor::run();
@@ -688,4 +694,15 @@ fn ctl(op: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{}", httpd::body_of(&response).trim());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_key_subcommand_parses() {
+        let cli = Cli::try_parse_from(["ymd", "session-key"]).expect("parse");
+        assert!(matches!(cli.command, Command::SessionKey));
+    }
 }

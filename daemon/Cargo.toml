@@ -3,7 +3,7 @@ name = "ymd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Yandex Music daemon (P0 skeleton)"
+description = "Yandex Music daemon for the KDE Plasma 6 plasmoid"
 
 [[bin]]
 name = "ymd"

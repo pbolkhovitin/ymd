@@ -16,10 +16,10 @@
 
 | Путь | Что | Статус |
 |---|---|---|
-| `daemon/src/main.rs` | CLI: `serve`, `doctor`, `status`, `ctl` | готов (P0) |
+| `daemon/src/main.rs` | CLI: `serve`, `session-key`, `doctor`, `status`, `ctl` | готов |
 | `daemon/src/httpd.rs` | `/v1/health`, `/v1/state`, `/v1/cmd`, `/v1/events` (SSE) | готов (P0) |
-| `daemon/src/state.rs` | состояние + симулированный плеер (тик 1 Гц) | P0-заглушка |
-| `daemon/src/session.rs` | capability-ключ `0600` | готов |
+| `daemon/src/state.rs` | состояние плеера, очередь, команды | готов |
+| `daemon/src/session.rs` | capability-ключ `0600`, `ymd session-key` | готов |
 | `plugin/widget.luau` | бар: статичная иконка + «Трек — Артист», tooltip | M2 |
 | `plugin/probe.luau` | дамп `barWidget.*`/`ui.*`/`noctalia.*` | P0 ✅ (S2/S3/S5) |
 | `plugin/bridge.luau` | SSE-подписка | P0 ✅ (S4) |
@@ -32,7 +32,7 @@
 | `plugin/panel.luau` | поиск, результаты, очередь, транспорт | M1 ✅ |
 | `daemon/src/cache.rs` | офлайн-кэш `encraw` + AES-CTR | M3 ✅ (базово) |
 | `daemon/src/config.rs` | настройки: качество звука, лимит кэша | M2 ✅ |
-| `daemon/src/doctor.rs` | проверка окружения (`ymd doctor`) | P0 ✅ |
+| `daemon/src/doctor.rs` | проверка окружения (`ymd doctor`), KDE/apt | готов |
 
 ## Ограничения окружения агента
 

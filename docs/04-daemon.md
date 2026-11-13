@@ -3,8 +3,8 @@
 ## Границы
 
 Демон — единственный, кто знает про Яндекс Музыку: токен, эндпоинты, подписи,
-медиа, кэш. Плагин видит только `/v1/*`. Демон не знает про Noctalia (кроме
-необязательного `open-panel` через `noctalia` CLI — лучше без этого).
+медиа, кэш. Плазмоид видит только `/v1/*`. Демон не знает про KDE Plasma —
+он лишь публикует локальный HTTP API и MPRIS.
 
 ## Workspace
 
@@ -92,7 +92,7 @@ GStreamer: playbin3 (uri = resolved stream url)
 - Очередь: `VecDeque<Track>` + `index`, `shuffle` (seed), `repeat (off|one|all)`.
 - `seek` — `SeekFlags::FLUSH | ACCURATE`; позиция — `query_position` раз в 250 мс
   (только пока играет; наружу — по SSE с троттлингом 1 Гц).
-- Ошибки: `error`-сообщение GStreamer → `skip` + `notify` через плагин (`error` в state).
+- Ошибки: `error`-сообщение GStreamer → `skip` + `notify` через плазмоид (`error` в state).
 - Фоллбэк без GStreamer-dev: `mpv --no-video` через `Command` (опция `player = "mpv"`).
 
 ### `mpris`
@@ -110,9 +110,9 @@ GStreamer: playbin3 (uri = resolved stream url)
 Методы: `Play`, `Pause`, `PlayPause`, `Stop`, `Next`, `Previous`, `Seek`, `SetPosition`,
 `Set`(`Volume`). Сигнал `Seeked`.
 
-Практический эффект: **встроенный виджет `media` Noctalia, медиа-клавиши, GNOME-шелл
-и lockscreen работают без нашего плагина.** Наш виджет — надстройка с
-яндекс-спецификой (лайк, волна, офлайн).
+Практический эффект: **встроенный виджет `media` KDE Plasma, медиа-клавиши,
+GNOME-шелл и lockscreen работают без нашего плазмоида.** Плазмоид — надстройка
+с яндекс-спецификой (лайк, волна, офлайн).
 
 ### `cache`
 
@@ -144,8 +144,8 @@ CREATE TABLE queue_state (id INTEGER PRIMARY KEY CHECK (id = 1),
 - niri: подключение к `$NIRI_SOCKET`, `Request::EventStream`; отслеживаем
   `WorkspaceActivated`, `WindowFocusChanged`, `WindowOpenedOrChanged` (fullscreen).
   Кратковременный разрыв сокета — реконнект 1 с.
-- Idle: `ext-idle-notify-v1` через `noctalia` не нужен демону — берём из
-  `logind` (`IdleHint`) или оставляем плагину.
+- Idle: `ext-idle-notify-v1` не нужен демону — берём из `logind` (`IdleHint`)
+  или оставляем плазмоиду.
 - Power: `UPower` `OnBattery` → `compact`.
 - Результат: `env{fullscreen, overview, idle, onBattery}` в `/v1/state` и правило
   `ui.mode` (`03`).
@@ -196,8 +196,8 @@ Environment=RUST_LOG=ymd=info
 WantedBy=graphical-session.target
 ~~~
 
-`ymd serve` пишет `$XDG_RUNTIME_DIR/ymd/session.key` (`0600`) при старте; плагин
-читает его для `X-YMD-Session`.
+`ymd serve` пишет `$XDG_RUNTIME_DIR/ymd/session.key` (`0600`) при старте;
+плазмоид получает ключ командой `ymd session-key` и передаёт его в `X-YMD-Session`.
 
 ## CLI
 
@@ -209,10 +209,15 @@ WantedBy=graphical-session.target
 | `ymd search "…"` | поиск в терминале |
 | `ymd download <trackId>` | офлайн |
 | `ymd serve` | запуск демона (для systemd) |
-| `ymd doctor` | проверки: keyring, GStreamer, niri socket, API, токен |
+| `ymd session-key` | напечатать capability-ключ для плазмоида KDE |
+| `ymd doctor` | проверки: keyring, GStreamer, KDE Plasma, API, токен |
 
 `ymd doctor` — важный инструмент поддержки: печатает таблицу «что работает / что нет»
 без секретов.
+
+`ymd session-key` читает `$XDG_RUNTIME_DIR/ymd/session.key` и печатает ключ в
+stdout. Плазмоид вызывает команду через `Plasma5Support` executable engine и
+передаёт результат в заголовке `X-YMD-Session`; shell при этом не используется.
 
 
 ## M2: собственный плеер
@@ -222,7 +227,7 @@ WantedBy=graphical-session.target
 | `player.rs` | `playbin3` → autoaudiosink (PipeWire): `load/play/pause/toggle/stop`, `seek_ms`, `position_ms`, `duration_ms`, `set_volume`, `poll_eos` |
 | `mpris_server.rs` | исходящий MPRIS (`org.mpris.MediaPlayer2` + `.Player`) через zbus 5 |
 
-Цепочка `play_track`: плагин → `POST /v1/cmd` → `command_async` резолвит URL
+Цепочка `play_track`: плазмоид → `POST /v1/cmd` → `command_async` резолвит URL
 через `api::stream` → `command` кладёт трек в очередь и грузит URL в плеер.
 Тикер раз в секунду берёт позицию у плеера, на EOS зовёт `next`
 (с резолвом следующего трека). MPRIS публикуется отдельной задачей; соединение
