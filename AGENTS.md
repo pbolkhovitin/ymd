@@ -1,7 +1,8 @@
 # AGENTS.md — контекст проекта
 
-Клиент Яндекс Музыки для **KDE Plasma 6**: плазмоид в панели + Rust-демон `ymd`.
-Этап: **KDE-порт завершён** (демон, плазмоид, .deb, документация).
+Клиент Яндекс Музыки для **KDE Plasma 6**: плазмоид в панели, приложение
+`ymd-qt` на Qt/Kirigami + Rust-демон `ymd`.
+Этап: **KDE-порт и Qt-приложение готовы** (демон, плазмоид, окно, .deb, документация).
 
 ## Читать в этом порядке
 
@@ -9,8 +10,9 @@
 2. `docs/01-concept.md` — зачем и как выглядит.
 3. `docs/02-architecture.md` — компоненты и IPC-контракт.
 4. `docs/03-kde-plasmoid.md` / `docs/04-daemon.md` — детали слоёв.
-5. `docs/07-roadmap.md` — что дальше.
-6. `notes/kde-port-findings.md` — факты порта и грабли.
+5. `docs/11-qt-app.md` — отдельное приложение.
+6. `docs/07-roadmap.md` — что дальше.
+7. `notes/kde-port-findings.md` — факты порта и грабли.
 
 ## Состояние кода
 
@@ -29,6 +31,9 @@
 | `plasmoid/contents/ui/main.qml` | ключ, polling, команды, поиск | готов |
 | `plasmoid/contents/ui/CompactRepresentation.qml` | компакт в панели | готов |
 | `plasmoid/contents/ui/FullRepresentation.qml` | попап: обложка, seek, транспорт, поиск, очередь | готов |
+| `app/src/ymdclient.{h,cpp}` | HTTP-клиент приложения: ключ, polling, команды, поиск | готов |
+| `app/src/tray.{h,cpp}` | трей: окно, play/pause, next/prev, выход | готов |
+| `app/qml/Main.qml` | окно `ymd-qt`: обложка, seek, транспорт, поиск, очередь | готов |
 | `packaging/` | Docker, `.deb`, systemd unit | готов |
 | `scripts/` | сборка, установка, проверки | готов |
 
@@ -75,13 +80,16 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 ## Правила
 
-- Плазмоид **не** обращается к API Яндекса и **не** хранит токен — только демон.
+- Плазмоид и `ymd-qt` **не** обращаются к API Яндекса и **не** хранят токен —
+  только демон.
 - В QML нет `#rrggbb`: цвета — `Kirigami.Theme` / `PlasmaComponents3`.
 - Ноль анимаций по умолчанию: никаких Behavior, marquee, интерполяций.
-- Ключ — только через `ymd session-key` (Plasma5Support executable engine),
-  без `sh -c`.
+- Ключ — только через `ymd session-key` (плазмоид — Plasma5Support executable
+  engine; `ymd-qt` — файл ключа или `QProcess`), без `sh -c`.
 - Сетевые запросы асинхронны; результат — в callback, не в `Component.onCompleted`.
 - Плазмоид не пишет в свой каталог; обложки грузятся по URL.
+- `ymd-qt` не дублирует `format.js`: копия должна совпадать с
+  `plasmoid/contents/ui/format.js` (`cmp`).
 - Факт попадает в `docs/` только после проверки; иначе — в `notes/`.
 
 ## Следующий шаг
@@ -90,8 +98,10 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
    попапе (разведка — `notes/lyrics-findings.md`).
 2. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
 3. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
-4. **Отдельное приложение Qt/Kirigami**: после KDE-порта; тот же демон `ymd`
-   по HTTP, окно вместо плазмоида. Требует отдельной спеки.
+
+Ограничение `ymd-qt`: меню трея на Wayland может не открываться при вызове
+через DBus (`ContextMenu` без input serial); клик по иконке и средняя кнопка
+работают. Подробности — `docs/11-qt-app.md`.
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг
 официального клиента (API, подписи, `encraw`) и крейты `ym-api`/`ym-auth`/`ym-media`.
