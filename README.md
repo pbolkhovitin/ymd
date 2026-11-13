@@ -1,125 +1,111 @@
 # ym-noctalia
 
-Клиент **Яндекс Музыки** для **niri + Noctalia**: бар-виджет + панель, без анимаций
-(или с отключаемыми), с максимальным сохранением функций официального клиента.
+Клиент **Яндекс Музыки** для **KDE Plasma 6**: плазмоид в панели и Rust-демон
+`ymd`. Без Electron, без анимаций по умолчанию, с нативным PipeWire и MPRIS.
 
-Текущий этап: **P0 — спайки** (проверка API Noctalia и связки с демоном).
-Документация готова, скелет демона и плагина собран.
-
-## Ключевое решение
-
-Плагины Noctalia v5 — Luau-скрипты в изолированных VM: нет аудио, AES-CTR, keyring
-и MPRIS. Поэтому система из двух частей:
+## Из чего состоит
 
 | Часть | Что делает | Технология |
 |---|---|---|
-| `ymd` — демон | авторизация, API, GStreamer-плеер, MPRIS, офлайн-кэш, Ynison, niri-события | Rust (systemd --user) |
-| `yandex-music` — плагин | бар-виджет, панель, шорткат, настройки | Luau (Noctalia v5) |
+| `ymd` | токен, API Яндекса, GStreamer-плеер, MPRIS, офлайн-кэш, «Моя волна» | Rust, systemd --user |
+| `plasma-widget-ymd` | компактный виджет в панели и попап: поиск, очередь, транспорт, режимы | QML / Plasma 6 |
 
-Связь: локальный HTTP + SSE (`noctalia.http` / `noctalia.httpStream`) по
-`127.0.0.1:8765`, авторизация — capability-файл `$XDG_RUNTIME_DIR/ymd/session.key`.
-Демон экспортирует MPRIS — встроенный виджет `media` работает «из коробки».
+Плазмоид не знает токен и не обращается к API Яндекса. Он общается только с
+локальным HTTP API `127.0.0.1:8765`; ключ доступа — `$XDG_RUNTIME_DIR/ymd/session.key`
+(0600), плазмоид получает его командой `ymd session-key`.
 
-## Структура
+Демон экспортирует MPRIS `org.mpris.MediaPlayer2.ymd`, поэтому медиа-клавиши и
+встроенный виджет `media` Plasma работают без нашего плазмоида.
 
-~~~text
-ym-noctalia/
-├── Cargo.toml               # workspace
-├── daemon/                  # ymd: скелет P0 (HTTP+SSE, симулированный плеер)
-│   └── src/{main,httpd,state,session,doctor}.rs
-├── plugin/                  # плагин Noctalia (Luau)
-│   ├── plugin.toml          # widget bar + widget probe + service bridge + panel
-│   ├── widget.luau          # бар: глиф + «Трек — Артист»
-│   ├── probe.luau           # S2/S3/S5: дамп реального API хоста
-│   ├── bridge.luau          # S4: SSE-подписка
-│   ├── panel.luau           # S3: декларативное ui.* дерево
-│   └── lib/ymd.luau         # мини-клиент демона
-├── scripts/                 # p0-check.sh, dev-install.sh, sse-watch.sh
-├── docs/                    # 01…10 (концепт, архитектура, плагин, демон, OAuth, …)
-└── notes/p0-findings.md     # заполняется по итогам спайков
-~~~
+## Установка из .deb
 
-## Качество звука
-
-По умолчанию — **lossless** (FLAC в MP4). Настройка в `~/.config/ymd/config.toml`:
-
-```toml
-[playback]
-quality = "lossless"   # lossless | hq | nq | lq
-fallback_hq = true
-```
-
-## Быстрый старт (P0)
-
-~~~bash
-cd ~/github/ym-noctalia
-cargo build -p ymd
-cargo run -p ymd -- serve          # терминал 1
-
-curl -s http://127.0.0.1:8765/v1/health | jq
-bash scripts/sse-watch.sh          # терминал 2
-bash scripts/p0-check.sh           # проверки окружения
-bash scripts/dev-install.sh        # плагин в Noctalia (drop-in)
-~~~
-
-Дальше — `docs/09-p0-spikes.md`: шаги S1–S9 с командами и критериями.
-
-## Документы
-
-| Файл | О чём |
-|---|---|
-| `docs/01-concept.md` | продукт, цели, принципы, режимы, сценарии |
-| `docs/02-architecture.md` | компоненты, потоки, IPC-контракт |
-| `docs/03-kde-plasmoid.md` | пакет Plasma, ключ, polling, компактный виджет |
-| `docs/04-daemon.md` | Rust-демон: модули, MPRIS, GStreamer, кэш, niri |
-| `docs/05-feature-matrix.md` | паритет с официальным клиентом |
-| `docs/06-design.md` | дизайн-язык: токены, состояния, запрет анимаций |
-| `docs/07-roadmap.md` | этапы P0–M4 с критериями приёмки |
-| `docs/08-risks.md` | риски, открытые вопросы, decision log |
-| `docs/09-p0-spikes.md` | пошаговые проверки P0 с командами |
-
-## Автозапуск
-
-Демон работает как пользовательский systemd-сервис и стартует при входе в сессию:
+Пакеты собираются в `dist/`:
 
 ```bash
-bash scripts/install-user-service.sh        # собрать release и установить
-systemctl --user status ymd                 # состояние
-journalctl --user -u ymd -f                 # логи
+bash packaging/build-deb.sh --arch arm64   # или --arch amd64
+sudo apt install ./ymd_0.2.0_arm64.deb ./plasma-widget-ymd_0.2.0_all.deb
+systemctl --user daemon-reload
+systemctl --user enable --now ymd
 ```
 
-Юнит — `packaging/ymd.service` (PipeWire как зависимость, `Restart=on-failure`,
-`RuntimeDirectory=ymd`). Плагин переподключается к демону сам.
+После установки добавьте «Yandex Music» на панель: правый клик по панели →
+«Добавить виджеты» → «Yandex Music».
+
+## Быстрый старт для разработки
+
+```bash
+# тесты демона в контейнере (на хосте Rust может отсутствовать)
+bash packaging/run-tests.sh
+
+# запуск демона
+cargo run -p ymd -- serve
+
+# проверка
+ymd doctor
+ymd status --json
+curl -s http://127.0.0.1:8765/v1/health
+
+# плазмоид: установка/обновление в текущую сессию
+bash scripts/dev-install.sh
+```
+
+Для входа: `ymd auth login` (OAuth Device Flow) или
+`ymd auth import --from-official`.
+
+## CLI
+
+| Команда | Смысл |
+|---|---|
+| `ymd serve [--port]` | запустить демон |
+| `ymd session-key` | напечатать capability-ключ для плазмоида |
+| `ymd status [--json]` | состояние плеера |
+| `ymd ctl toggle\|play\|pause\|next\|prev\|like\|mode` | управление |
+| `ymd search "…" [--json]` | поиск |
+| `ymd wave [--json]` | включить «Мою волну» |
+| `ymd quality [lossless\|hq\|nq\|lq]` | качество звука |
+| `ymd download <id>` / `download-album <id>` | офлайн-кэш |
+| `ymd cache list\|path\|remove\|info` | управление кэшем |
+| `ymd track <id>` / `stream <id>` | метаданные и URL потока |
+| `ymd auth login\|import\|status\|logout` | авторизация |
+| `ymd doctor` | проверка окружения |
 
 ## Статус
 
-Репозиторий: https://github.com/pbolkhovitin/ym-noctalia (private).
-
 | Что | Состояние |
 |---|---|
-| Концепт и документация | готово |
-| P0-спайки | S1–S8 ✅; S9 заменён импортом токена |
-| Демон `ymd` | работает: API, поток, плеер, MPRIS, кэш, волна |
-| Плагин | бар (иконка + трек), панель (поиск/очередь/режимы), bridge, probe |
-| M1 — поиск и воспроизведение | ✅ (`ymd search`, `ymd stream`) |
-| M2 — плеер + исходящий MPRIS | ✅ (`playerctl --player=ymd`) |
-| M3 — офлайн-кэш | ✅ (`ymd download`, `download-album`, лимит + LRU) |
-| M4 — «Моя волна» | ✅ (`ymd wave`, автодогрузка) |
-| Тексты песен | разведка API выполнена, код не начат (`notes/lyrics-findings.md`) |
-| Палитра (факт `getColor`) | `primary #C4B28A` на текущей теме |
+| Демон: API, поток, GStreamer, MPRIS | ✅ |
+| Офлайн-кэш: download, LRU, локальное воспроизведение | ✅ |
+| «Моя волна»: запуск, автодогрузка, feedback | ✅ |
+| Плазмоид: компакт, попап, поиск, очередь, режимы | ✅ |
+| Пакеты `.deb` (amd64/arm64) | ✅ |
+| Тексты песен | разведка API, код не начат |
+| Докачка после обрыва | не сделана |
+| Ynison | не сделана |
+| Отдельное приложение Qt/Kirigami | запланировано |
 
-## Окружение (проверено на хосте)
+## Документация
 
-- niri (Wayland), Noctalia **v5** (`~/.local/state/noctalia`, `settings.toml`).
-- Бар: `thickness = 34`, `radius = 12`, капсулы `surface_variant/0.6`, топ-бар.
-- В баре уже стоит виджет `media` (встроенный MPRIS).
-- Палитра: берётся из `noctalia.getColor(role)`; фактическое значение на
-  2026-11-12 — `primary #C4B28A` (тема меняется, хардкод запрещён).
-- GStreamer dev-пакеты установлены (`gstreamer-1.0` 1.28.9), `libsecret` есть.
-- Noctalia **v5.4.1**, niri 26.04; бар — топ, `thickness = 34`.
-- Виджет бара подключён как `[widget.ym] type = "pbolkhovitin/yandex-music:bar"`.
+| Файл | О чём |
+|---|---|
+| `docs/01-concept.md` | продукт, принципы, сценарии |
+| `docs/02-architecture.md` | компоненты и IPC-контракт |
+| `docs/03-kde-plasmoid.md` | пакет Plasma, ключ, polling, виджет и попап |
+| `docs/04-daemon.md` | модули демона, CLI, MPRIS, кэш, волна, качество |
+| `docs/05-feature-matrix.md` | паритет с официальным клиентом |
+| `docs/06-design.md` | дизайн плазмоида: Kirigami, цвета, запрет анимаций |
+| `docs/07-roadmap.md` | этапы и следующий шаг |
+| `docs/08-risks.md` | риски и открытые вопросы |
+| `docs/09-p0-spikes.md` | проверки окружения и история спайков |
+| `notes/kde-port-findings.md` | факты порта: хост, QML, упаковка |
+
+## Требования
+
+- KDE Plasma 6 (проверено на 6.6.6, Wayland).
+- PipeWire + WirePlumber; GStreamer 1.24+ с плагинами good/bad/libav.
+- `playerctl`, `libsecret-tools`, `dbus-user-session`.
+- Для сборки: Docker с binfmt для arm64 или Rust + GStreamer dev-пакеты.
 
 ## Связанные материалы
 
 Реверс-инжиниринг официального клиента: `~/github/yandex-music-research` —
-10 документов, деобфусцированный код, готовые крейты `ym-api`/`ym-auth`/`ym-media`.
+API, подписи, `encraw`, крейты `ym-api`/`ym-auth`/`ym-media`.

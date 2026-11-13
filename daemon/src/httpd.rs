@@ -1,4 +1,4 @@
-//! Локальный HTTP API для плагина Noctalia: JSON + SSE.
+//! Локальный HTTP API для плазмоида KDE: JSON + SSE.
 //!
 //! Авторизация — capability-файл `$XDG_RUNTIME_DIR/ymd/session.key` в заголовке
 //! `X-YMD-Session`. Контракт: `docs/02-architecture.md`.

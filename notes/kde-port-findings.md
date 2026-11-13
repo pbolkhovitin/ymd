@@ -45,3 +45,22 @@
 - В отдельном QML-файле (`CompactRepresentation.qml`) нужно явно импортировать
   `org.kde.plasma.plasmoid`, иначе `Plasmoid` не определён. Ошибка видна в
   `journalctl --user -u plasma-plasmashell`.
+
+## Сборка .deb
+
+- `packaging/build-deb.sh --arch amd64` — 27 тестов, release, `dpkg-shlibdeps`,
+  оба пакета. Первый запуск упал на `dpkg-deb: control directory has bad
+  permissions 770`: CIFS отдаёт каталоги с `770`. Лечение — staging внутри
+  контейнера в `/tmp/ymd-stage`, затем `cp` готовых `.deb` в `dist/`, плюс
+  `chmod 0755` на каталоги пакета и `find ... -exec chmod` на файлы плазмоида.
+- `dpkg-shlibdeps` предупреждает про diversions libc6 — это нормально для
+  контейнера; зависимости всё равно вычисляются.
+- `dist/` и `packaging/.shlibdeps/` — в `.gitignore`.
+- arm64-сборка идёт через QEMU и заметно медленнее; кэш cargo/target —
+  `/var/tmp/opencode/ymd-cache` (CIFS не годится для target).
+
+## Отдельное приложение Qt
+
+Пользователь попросил после KDE-порта сделать standalone-приложение на Qt.
+Предварительно: Kirigami/Qt Quick, тот же демон `ymd` по HTTP, ключ через
+`ymd session-key`. Нужна отдельная спека и план; в текущий порт не входит.

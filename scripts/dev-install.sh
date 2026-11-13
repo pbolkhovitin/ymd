@@ -1,18 +1,34 @@
 #!/usr/bin/env bash
-# Локальная установка плагина как path/drop-in источника.
-# Каталог в data-директории имеет высший приоритет среди источников.
+# Локальная установка/обновление плазмоида из репозитория.
+#
+#   bash scripts/dev-install.sh            # установить или обновить
+#   bash scripts/dev-install.sh --remove   # удалить
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-dest="$HOME/.local/share/noctalia/plugins/yandex-music"
+id="io.github.pbolkhovitin.ymd"
+type="Plasma/Applet"
 
-mkdir -p "$(dirname "$dest")"
-ln -sfn "$repo/plugin" "$dest"
-echo "linked: $dest -> $repo/plugin"
-
-if command -v noctalia >/dev/null 2>&1; then
-  noctalia msg plugins enable pbolkhovitin/yandex-music || true
-  noctalia msg plugins list | grep -i yandex || true
-else
-  echo "noctalia не в PATH: включи плагин вручную (Settings -> Plugins)"
+if ! command -v kpackagetool6 >/dev/null 2>&1; then
+  echo "kpackagetool6 не найден: установи plasma-workspace" >&2
+  exit 1
 fi
+
+if [[ "${1:-}" == "--remove" ]]; then
+  kpackagetool6 --type "$type" --remove "$id" || true
+  echo "удалён: $id"
+  exit 0
+fi
+
+if kpackagetool6 --type "$type" --list | grep -qx "$id"; then
+  kpackagetool6 --type "$type" --upgrade "$repo/plasmoid"
+  echo "обновлён: $id"
+else
+  kpackagetool6 --type "$type" --install "$repo/plasmoid"
+  echo "установлен: $id"
+fi
+
+echo
+echo "Добавь виджет в панель: ПКМ по панели → «Настроить панель» → «Добавить» →"
+echo "«Yandex Music». Если виджет уже добавлен, перезапусти plasmashell:"
+echo "  systemctl --user restart plasma-plasmashell"

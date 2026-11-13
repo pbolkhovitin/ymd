@@ -3,420 +3,262 @@
 ## Границы
 
 Демон — единственный, кто знает про Яндекс Музыку: токен, эндпоинты, подписи,
-медиа, кэш. Плазмоид видит только `/v1/*`. Демон не знает про KDE Plasma —
-он лишь публикует локальный HTTP API и MPRIS.
+аудиопоток, кэш и MPRIS. Плазмоид видит только локальный HTTP API `/v1/*`
+и никогда не обращается к API Яндекса.
 
-## Workspace
+```
+plasmoid (QML) ──HTTP/JSON──> ymd ──HTTPS──> Яндекс Музыка
+      │                         │
+      └── ymd session-key       ├── GStreamer → PipeWire
+                                ├── MPRIS (zbus)
+                                └── ~/.local/share/ymd/cache
+```
 
-~~~text
-ymd/
-├── crates/
-│   ├── ym-api/      # HTTP: заголовки, ретраи, эндпоинты, модели, подписи
-│   ├── ym-auth/     # OAuth loopback, libsecret, профили
-│   ├── ym-media/    # file-info, encraw, AES-CTR, кэш-файлы
-│   ├── ym-player/   # GStreamer, очередь, состояние
-│   ├── ym-mpris/    # zbus: MediaPlayer2 + Player
-│   ├── ym-env/      # niri IPC, idle, power
-│   ├── ymd/         # бинарь: httpd, mpris, wiring
-│   └── ymctl/       # CLI (входит в ymd как подкоманды)
-└── Cargo.toml
-~~~
+## Состав workspace
 
-Переиспользуем наработки из `yandex-music-research/client` (`ym-api`, `ym-auth`,
-`ym-media` — уже собираются и покрыты тестами).
-
-~~~toml
-[workspace.dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
-axum = "0.8"                 # локальный HTTP + SSE
-zbus = "5"                   # MPRIS
-gstreamer = "0.23"
-niri-ipc = "25"              # следует версии niri
-rusqlite = { version = "0.32", features = ["bundled"] }
-keyring = { version = "3", features = ["linux-native"] }
-aes = "0.8"; ctr = "0.9"; hmac = "0.12"; sha2 = "0.10"; base64 = "0.22"
-tokio-tungstenite = "0.24"   # Ynison
-clap = { version = "4", features = ["derive"] }
-~~~
+```text
+Cargo.toml            workspace, версия 0.2.0
+daemon/
+  Cargo.toml          бинарь ymd
+  src/main.rs         CLI и запуск
+  src/httpd.rs        локальный HTTP API
+  src/state.rs        состояние, очередь, команды, волна
+  src/api.rs          клиент API Яндекса, подписи, поток
+  src/auth.rs         импорт токена, keyring/файл
+  src/oauth.rs        Device Flow
+  src/media.rs        HMAC-подписи, AES-CTR
+  src/player.rs       GStreamer playbin3
+  src/mpris.rs        внешний MPRIS через playerctl (резерв)
+  src/mpris_server.rs исходящий MPRIS через zbus
+  src/cache.rs        офлайн-кэш encraw
+  src/config.rs       config.toml
+  src/session.rs      capability-ключ
+  src/doctor.rs       проверка окружения
+packaging/            Docker, .deb, systemd unit
+plasmoid/             QML-плазмоид Plasma 6
+```
 
 ## Модули
 
-### `auth`
+### `auth` и `oauth`
 
-> **Факт (2026-11-12):** новым приложениям в Яндекс ID не дают доступ к Музыкальному
-> API — в свойствах приложения нет раздела «Доступ к API», документация Music API
-> удалена. Поэтому основной путь — импорт токена из официального клиента, а не
-> OAuth-поток. Реализовано: `ymd auth import --from-official|--token`, `auth status`,
-> `auth logout`; хранение — GNOME Keyring (`secret-tool`), файл `0600` как фоллбэк.
+Основной вход — `ymd auth login`: OAuth Device Flow без собственного
+`client_id` (пользователь вводит код на `https://oauth.yandex.ru/device`).
+Альтернатива — `ymd auth import --from-official` (токен из Local Storage
+официального клиента) или `--token`.
 
-OAuth-поток (оставлен на случай, если доступ к API вернут):
-
-1. `ymd auth login` генерирует `state` + `PKCE` `verifier/challenge`.
-2. Поднимает `127.0.0.1:<port>/callback` (`tiny_http`), печатает URL, открывает
-   браузер (`xdg-open`).
-3. Пользователь входит; Яндекс редиректит на loopback с `code`.
-4. Обмен `code → access_token + refresh_token`, сохранение в libsecret:
-   `service=ymd, user=<login>`.
-5. `ymd auth status` / `ymd auth logout`.
-
-> Требуется **свой** OAuth-клиент: `redirect_uri` официального привязан к
-> `music-application://desktop` и loopback не примет.
->
-> Регистрация проверена по документации 2026-11-12: `response_type=code` и PKCE
-> (`S256`) поддерживаются, код живёт 10 минут, при `code_verifier` `client_secret`
-> не нужен. Пошаговая инструкция — [`10-oauth-registration.md`](10-oauth-registration.md).
->
-> Не подтверждено: доступна ли группа scope `music:*` новым приложениям (документация
-> Музыкального API закрыта). Проверяется в свойствах приложения за минуту.
-
-Фоллбэк: `ymd auth import` — вставить URL с `#access_token` (как в текущем
-`ymc login`), если свой клиент недоступен.
+Токен хранится в GNOME Keyring / KWallet через `secret-tool`; если keyring
+недоступен — файл `0600` в конфигурационном каталоге. Плазмоид токен не видит.
 
 ### `api`
 
-Заголовки (`x-yandex-music-client`, `x-yandex-music-device`, `accept-language`),
-ретраи 429/5xx (2 попытки, backoff 300/900 мс), `x-request-id`, типизированные
-модели (`Track`, `Album`, `Artist`, `Playlist`, `Liked`). Схемы непубличные —
-неизвестные поля игнорируются (`#[serde(default)]`), ошибки валидации — в лог.
+HTTP-клиент с заголовками `x-yandex-music-client`, `x-yandex-music-device`,
+`accept-language`; ретраи 429/5xx; толерантный разбор JSON.
+
+Реализовано: `search`, `track`, `album`, `artist`, `playlists`, `likes`,
+`stream`, `encraw`, `wave_start`, `wave_more`, `wave_feedback`.
+
+Прямой поток: `/get-file-info` с парой «заголовок клиента + ключ», ответ —
+`result.downloadInfo.url` (CDN `strm.yandex.net`). Качества: `lossless` →
+`flac-mp4`, `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`, `lq` → ниже.
+Если запрошенное качество недоступно и `fallback_hq = true`, запрос
+повторяется в `hq`.
 
 ### `player`
 
-~~~text
-GStreamer: playbin3 (uri = resolved stream url)
-  audio-sink = pipewiresink (fallback: autoaudiosink)
-  volume    = cubic, 0..1
-  about-to-finish → next()
-~~~
+GStreamer `playbin3` с `autoaudiosink` (на KDE это PipeWire). Умеет
+`load/play/pause/toggle/stop`, `seek_ms`, `position_ms`, `duration_ms`,
+`set_volume`, `poll_eos`. Тикер раз в секунду забирает позицию, на EOS
+переходит к следующему треку.
 
-- Очередь: `VecDeque<Track>` + `index`, `shuffle` (seed), `repeat (off|one|all)`.
-- `seek` — `SeekFlags::FLUSH | ACCURATE`; позиция — `query_position` раз в 250 мс
-  (только пока играет; наружу — по SSE с троттлингом 1 Гц).
-- Ошибки: `error`-сообщение GStreamer → `skip` + `notify` через плазмоид (`error` в state).
-- Фоллбэк без GStreamer-dev: `mpv --no-video` через `Command` (опция `player = "mpv"`).
+Очередь: `Vec<QueueItem>` + `index`, `repeat` (`off|all|one`), `shuffle`.
+`play_track` не дублирует трек, а переключается на существующий.
+`queue_play`, `queue_remove`, `queue_clear` меняют очередь без перезапуска.
 
-### `mpris`
+### `mpris_server` и `mpris`
 
-`org.mpris.MediaPlayer2.ymd` + `/Player`:
+`mpris_server.rs` публикует `org.mpris.MediaPlayer2.ymd` и `/Player` через
+zbus: свойства `PlaybackStatus`, `Metadata`, `Position`, `Volume`,
+`CanSeek/CanGoNext/CanGoPrevious`, методы `Play/Pause/PlayPause/Stop/Next/
+Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 
-| Свойство | Значение |
-|---|---|
-| `PlaybackStatus` | `Playing` / `Paused` / `Stopped` |
-| `Metadata` | `mpris:trackid`, `xesam:title`, `xesam:artist`, `xesam:album`, `mpris:length`, `mpris:artUrl` |
-| `Position` | мкс, из `player` |
-| `Volume` | 0..1 |
-| `CanSeek/CanGoNext/CanGoPrevious` | `true` |
+`mpris.rs` — резервный источник: если локальный плеер ещё не брал управление,
+демон читает состояние и отправляет команды внешнему MPRIS-плееру через
+`playerctl`. После первого локального воспроизведения внешний MPRIS больше
+не подменяет состояние.
 
-Методы: `Play`, `Pause`, `PlayPause`, `Stop`, `Next`, `Previous`, `Seek`, `SetPosition`,
-`Set`(`Volume`). Сигнал `Seeked`.
-
-Практический эффект: **встроенный виджет `media` KDE Plasma, медиа-клавиши,
-GNOME-шелл и lockscreen работают без нашего плазмоида.** Плазмоид — надстройка
-с яндекс-спецификой (лайк, волна, офлайн).
+Практический эффект: медиа-клавиши, виджет `media` Plasma и lockscreen
+работают без плазмоида.
 
 ### `cache`
 
-`~/.local/share/ymd/cache/` + SQLite:
+Каталог `~/.local/share/ymd/cache/`, индекс `index.json`. Загрузка `encraw`
+чанками по 1 МиБ, расшифровка AES-128-CTR (`counter = offset/16`,
+`skip = offset%16`), запись `.part` → итоговый файл. `resolve_url` сначала
+проверяет кэш и отдаёт `file://…`, поэтому скачанный трек играет без сети.
 
-~~~sql
-CREATE TABLE track (id INTEGER PRIMARY KEY, title TEXT, artists TEXT,
-                    album_id INTEGER, duration_ms INTEGER, updated_at INTEGER);
-CREATE TABLE file  (track_id INTEGER, quality TEXT, path TEXT,
-                    bytes INTEGER, key BLOB, etag TEXT, complete INTEGER,
-                    PRIMARY KEY (track_id, quality));
-CREATE TABLE queue_state (id INTEGER PRIMARY KEY CHECK (id = 1),
-                          payload TEXT, updated_at INTEGER);
-~~~
+CLI: `ymd download <id>`, `ymd download-album <id>`, `ymd cache list|path|
+remove|info`. Лимит `[cache] limit_mb` (по умолчанию 2048) проверяется после
+каждой загрузки, старые записи вытесняются по `at`. Докачка после обрыва
+пока начинается с нуля.
 
-- Загрузка: `encraw` чанками (`Range`), расшифровка AES-128-CTR
-  (counter = `offset/16`, `skip = offset%16`), запись `.part` → rename.
-- LRU: лимит `cache_limit_gb` (по умолчанию 5), вытеснение по `last_played`.
-- Проверка целостности: размер + `sha256` из `file-info` (если отдан).
+### `session`
 
-### `ynison`
+Ключ `$XDG_RUNTIME_DIR/ymd/session.key`, права `0600`, создаётся при
+`ymd serve`. Плазмоид получает его командой `ymd session-key` и передаёт
+в заголовке `X-YMD-Session`. Без ключа доступен только `/v1/health`.
 
-Опционально (`ynison = false` по умолчанию): WebSocket-подписка на состояние
-аккаунта, `PutYnisonState` при локальных изменениях, `Device-Id` = `uuid` из
-конфига. Не блокирует основной путь: без него плеер полностью работоспособен.
+### `doctor`
 
-### `env`
+`ymd doctor` печатает таблицу проверок: ключ, KDE Plasma/plasmashell,
+`playerctl`, `gst-launch-1.0`, `mpv`, `secret-tool`, `curl`, порт 8765.
+Подсказки — для apt/Ubuntu. Предупреждение не является ошибкой: без части
+пакетов доступны не все возможности.
 
-- niri: подключение к `$NIRI_SOCKET`, `Request::EventStream`; отслеживаем
-  `WorkspaceActivated`, `WindowFocusChanged`, `WindowOpenedOrChanged` (fullscreen).
-  Кратковременный разрыв сокета — реконнект 1 с.
-- Idle: `ext-idle-notify-v1` не нужен демону — берём из `logind` (`IdleHint`)
-  или оставляем плазмоиду.
-- Power: `UPower` `OnBattery` → `compact`.
-- Результат: `env{fullscreen, overview, idle, onBattery}` в `/v1/state` и правило
-  `ui.mode` (`03`).
+## Локальный HTTP API
+
+Все эндпоинты, кроме `/v1/health`, требуют заголовок
+`X-YMD-Session: <ключ>`.
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/v1/health` | `{ok, version, uptime_s, state_rev}` без ключа |
+| GET | `/v1/state` | снимок состояния (camelCase) |
+| GET | `/v1/search?q=…&page=…` | `{query, tracks:[…]}` |
+| POST | `/v1/cmd` | `{op, payload}` → `{ok, rev}` |
+| GET | `/v1/events` | SSE-поток состояний (для отладки) |
+
+### Состояние
+
+`/v1/state` отдаёт:
+
+```json
+{
+  "rev": 12,
+  "status": "playing",
+  "track": {
+    "id": "123", "title": "…", "artists": ["…"], "album": "…",
+    "durationMs": 214000, "liked": false, "cover": "https://…"
+  },
+  "positionMs": 42000,
+  "volume": 0.8,
+  "queue": {
+    "items": [{"id":"…","title":"…","artists":["…"],"durationMs":0,"cover":null}],
+    "length": 1, "index": 0, "shuffle": false, "repeat": "all"
+  },
+  "env": {"fullscreen": false, "overview": false, "idle": false, "onBattery": false},
+  "ui": {"mode": "full"},
+  "wave": {"sessionId": "…", "batchId": "…", "active": true},
+  "quality": "lossless",
+  "codec": "flac-mp4"
+}
+```
+
+`quality`/`codec` — фактическое качество текущего потока, а не только
+значение из конфига. `wave` отсутствует, если волна не запущена.
+
+### Команды
+
+| `op` | `payload` |
+|---|---|
+| `toggle`, `play`, `pause`, `stop`, `next`, `prev` | — |
+| `like` | — |
+| `wave_start`, `wave_more`, `wave_feedback`, `wave_stop` | `feedback` для feedback |
+| `quality` | `{"value":"lossless|hq|nq|lq"}` |
+| `mode` | — (переключает `full`/`compact`) |
+| `play_track` | объект трека (`id`, `title`, `artists`, …) |
+| `enqueue` | объект трека |
+| `queue_play`, `queue_remove` | `{"index":0}` |
+| `queue_clear` | — |
+| `volume` | `{"value":0.0…1.0}` |
+| `seek` | `{"positionMs":42000}` |
+| `repeat` | `{"value":"off|all|one"}` |
+| `shuffle` | `{"value":true}` |
+
+`wave_start`/`wave_more`/`wave_feedback` — асинхронные: сначала резолвят
+радио-сессию, затем меняют очередь.
 
 ## Конфигурация
 
-`~/.config/ymd/config.toml`:
-
-~~~toml
-[http]
-port = 8765            # 0 = только UNIX-socket
-bind = "127.0.0.1"
-
-[player]
-backend = "gstreamer"  # gstreamer | mpv
-quality = "hq"         # lossless | hq | nq | lq
-crossfade_ms = 0       # 0 = выключено
-
-[cache]
-enabled = true
-limit_gb = 5
-dir = "~/.local/share/ymd/cache"
-
-[env]
-follow_niri = true
-idle_minutes = 10
-compact_on_battery = true
-
-[ynison]
-enabled = false
-~~~
-
-## systemd (user): автозапуск
-
-Демон ставится как **пользовательский** сервис: он стартует вместе с сессией
-пользователя (при входе в niri), а не на этапе загрузки ОС. Это осознанно —
-MPRIS и keyring живут на session bus, которого до логина нет.
-
-Установка (сборка + бинарь + юнит + enable):
-
-~~~bash
-bash scripts/install-user-service.sh              # release-сборка и установка
-bash scripts/install-user-service.sh --no-build   # использовать готовый бинарь
-bash scripts/install-user-service.sh --uninstall
-~~~
-
-Скрипт кладёт `ymd` в `~/.local/bin/ymd`, юнит — в `~/.config/systemd/user/ymd.service`,
-затем `daemon-reload` + `enable --now`.
-
-Единица лежит в репозитории: `packaging/ymd.service`.
-
-~~~ini
-[Unit]
-Description=ymd — Yandex Music daemon (Noctalia/niri)
-After=pipewire.service wireplumber.service
-Wants=pipewire.service
-After=dbus.socket
-
-[Service]
-ExecStart=%h/.local/bin/ymd serve
-Restart=on-failure
-RestartSec=2
-Environment=RUST_LOG=ymd=info
-RuntimeDirectory=ymd
-RuntimeDirectoryMode=0700
-NoNewPrivileges=yes
-PrivateTmp=yes
-
-[Install]
-WantedBy=default.target
-~~~
-
-`ymd serve` пишет `$XDG_RUNTIME_DIR/ymd/session.key` (`0600`) при старте;
-клиент получает ключ командой `ymd session-key` и передаёт его в `X-YMD-Session`.
-
-Что из этого следует:
-
-| Решение | Зачем |
-|---|---|
-| `WantedBy=default.target` | старт при входе в сессию; `graphical-session.target` в niri ненадёжен |
-| `After=pipewire.service` | GStreamer подключается к уже поднятому PipeWire |
-| `RuntimeDirectory=ymd` | `$XDG_RUNTIME_DIR/ymd` (0700) создаётся systemd, ключ пересоздаётся при каждом старте и каталог удаляется при остановке |
-| `Restart=on-failure` | падение не оставляет бар/панель без демона |
-| нет `loginctl enable-linger` | сервис сессионный: без сессии нет MPRIS и keyring |
-
-Токен читается **лениво**, при первом запросе к API (`secret-tool` через D-Bus),
-поэтому даже если keyring разблокируется позже старта демона — всё заработает.
-
-Клиент переподключается сам: `bridge.luau` повторяет подписку каждые 5 с, пока
-SSE-хендл пуст, а виджет показывает `ymd off`. После `systemctl --user restart ymd`
-бар восстанавливается без перезапуска Noctalia.
-
-Проверка после перезагрузки:
-
-~~~bash
-systemctl --user is-enabled ymd      # enabled
-systemctl --user is-active ymd       # active
-ls -l $XDG_RUNTIME_DIR/ymd/          # session.key, 0600
-curl -s localhost:8765/v1/health     # {"ok":true,...}
-playerctl --list-all                 # в списке есть ymd
-~~~
-
-## CLI
-
-| Команда | Смысл |
-|---|---|
-| `ymd auth login` / `status` / `logout` | авторизация |
-| `ymd play <id\|url>`, `pause`, `toggle`, `next`, `prev` | управление |
-| `ymd status --json` | снимок состояния (для скриптов и отладки) |
-| `ymd search "…"` | поиск в терминале |
-| `ymd download <trackId>` | офлайн |
-| `ymd serve` | запуск демона (для systemd) |
-| `ymd session-key` | напечатать capability-ключ для плазмоида KDE |
-| `ymd doctor` | проверки: keyring, GStreamer, KDE Plasma, API, токен |
-
-`ymd doctor` — важный инструмент поддержки: печатает таблицу «что работает / что нет»
-без секретов.
-
-`ymd session-key` читает `$XDG_RUNTIME_DIR/ymd/session.key` и печатает ключ в
-stdout. Плазмоид вызывает команду через `Plasma5Support` executable engine и
-передаёт результат в заголовке `X-YMD-Session`; shell при этом не используется.
-
-
-## M2: собственный плеер
-
-| Модуль | Что делает |
-|---|---|
-| `player.rs` | `playbin3` → autoaudiosink (PipeWire): `load/play/pause/toggle/stop`, `seek_ms`, `position_ms`, `duration_ms`, `set_volume`, `poll_eos` |
-| `mpris_server.rs` | исходящий MPRIS (`org.mpris.MediaPlayer2` + `.Player`) через zbus 5 |
-
-Цепочка `play_track`: плазмоид → `POST /v1/cmd` → `command_async` резолвит URL
-через `api::stream` → `command` кладёт трек в очередь и грузит URL в плеер.
-Тикер раз в секунду берёт позицию у плеера, на EOS зовёт `next`
-(с резолвом следующего трека). MPRIS публикуется отдельной задачей; соединение
-удерживается живым, иначе шина отпускает имя.
-
-Проверено: `playerctl --player=ymd metadata` отдаёт трек, `play-pause` работает,
-медиа-клавиши и виджет `media` получают состояние.
-
-Очередь: `play_track` не дублирует трек, а переключается на существующий;
-`repeat` (`off|all|one`), `shuffle`, `queue_remove`. После первого запуска
-локального плеера внешний MPRIS больше не подменяет состояние (флаг `owned`).
-
-## M1: источник состояния
-
-| Модуль | Что делает | Статус |
-|---|---|---|
-| `api.rs` | HTTP-клиент API: `search`, `track`, `album`, `artist`, `playlists`, `likes`, `stream`; ретраи и толерантный разбор (`result` опционален) | готов |
-| `media.rs` | HMAC-подпись `file-info`/`lyrics`, `secretKey` по платформам | готов (для `encraw`) |
-| `mpris.rs` | чтение состояния и командование внешним MPRIS-плеером через `playerctl` | готов (временный источник) |
-
-Порядок выбора источника в тикере (1 Гц):
-
-1. есть MPRIS-плеер → состояние берётся у него, команды идут в `playerctl`;
-2. плеера нет → работает встроенная симуляция (`state.rs`).
-
-Прямой поток работает (2026-11-12):
-
-- основной путь — `/get-file-info` с парой «`X-Yandex-Music-Client:
-  YandexMusicDesktopAppWindows/5.95.0` + ключ `kzqU4XhfCaY6B6JTHODeq5`»;
-  ответ — `result.downloadInfo.url`, прямые CDN-ссылки `strm.yandex.net`;
-- резерв — `/tracks/{id}/download-info` → XML → `md5`-подпись → `/get-mp3/...`;
-- качества: `lossless` → `flac-mp4`, `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
-
-Вход: `ymd auth login` — OAuth Device Flow (`daemon/src/oauth.rs`), без своего
-OAuth-приложения. Пользователю показывается канонический адрес
-`https://oauth.yandex.ru/device` и 8-символьный код; `ya.ru/device` из ответа API —
-короткий редирект на него. Альтернатива — `ymd auth import --from-official`.
-
-`mpris.rs` остаётся источником состояния, пока не поднят собственный плеер (M2).
-
-
-## M3: офлайн-кэш
-
-| Модуль | Что делает |
-|---|---|
-| `cache.rs` | скачивание `encraw`, почанковая расшифровка, индекс `index.json` |
-| `media::decrypt_chunk` | AES-128-CTR, counter = `offset/16`, skip = `offset%16` |
-
-Поток: `get-file-info(transports=encraw)` → `urls[0]` + `key` (hex) →
-`Range: bytes=0-0` для размера → чанки по 1 МиБ → расшифровка → `.part` →
-`<id>.<ext>` → запись в `index.json`.
-
-`resolve_url` сначала проверяет кэш: локальный файл отдаётся как `file://…`,
-поэтому скачанный трек играет без сети и без токена.
-
-CLI: `ymd download <id> [--quality]`, `ymd cache list|path|remove|info`.
-
-Лимит кэша задаётся в `~/.config/ymd/config.toml` (`[cache] limit_mb`, по
-умолчанию 2048) и проверяется после каждой загрузки: самые старые записи
-вытесняются по `at`. `ymd download-album <id>` качает альбом целиком, пропуская
-уже скачанное; `/v1/search` помечает треки полем `cached`.
-
-Ограничения: докачка после обрыва начинается с нуля (`.part` перезаписывается).
-
-
-## M4: «Моя волна»
-
-| Модуль | Что делает |
-|---|---|
-| `api::wave_start` | `POST /rotor/session/new` → `radioSessionId`, `batchId`, партия треков |
-| `api::wave_more` | `POST /rotor/session/{id}/tracks` → следующая партия |
-| `api::wave_feedback` | `POST /rotor/session/{id}/feedbacks` (`like`/`dislike`/`skip`/`trackStarted`) |
-| `state::WaveInfo` | `sessionId`, `batchId`, `active` — в `/v1/state` как `wave` |
-
-Команды: `wave_start` (заменяет очередь партией радио и запускает первый трек),
-`wave_more`, `wave_feedback`, `wave_stop`.
-
-Догрузка автоматическая: когда до конца очереди остаётся один трек, тикер
-запускает `wave_more` (флаг `wave_pending` не даёт плодить параллельные запросы).
-Треки волны попадают в общую очередь, поэтому `repeat`/`shuffle` и кэш работают
-без отдельного кода.
-
-Тонкость: одиночный `POST …/feedback` не отвечает (соединение закрывается),
-используется только множественный `/feedbacks` с `{"feedback":[…]}`.
-Подробности — `notes/m4-findings.md`.
-
-## Тексты песен (разведка, код не начат)
-
-`GET /tracks/{id}/lyrics?format=TEXT|LRC|RICH_JSON&timeStamp=…&sign=…`
-
-Подпись **не такая**, как у `file-info`: ключ `kzqU4XhfCaY6B6JTHODeq5` (windows),
-данные `trackId + timeStamp` без разделителя, base64 без обрезки последнего символа.
-Любая другая комбинация даёт `403 Invalid Sign`.
-
-Ответ содержит не текст, а `downloadUrl` (presigned S3) плюс `lyricId`,
-`externalLyricId`, `writers`, `major` (например Musixmatch). Сам текст забирается
-вторым GET без авторизации; `LRC` — строки вида `[00:19.67] …`, `TEXT` — без таймкодов.
-
-План реализации: `api::lyrics()` (подпись + второй GET), `GET /v1/lyrics?id=`
-в демоне (кэш текста в `cache`), `ymd lyrics <id>`, кнопка «Текст» в панели с
-подсветкой текущей строки по `positionMs`.
-
-Детали и матрица проверок — `notes/lyrics-findings.md`.
-
-
-### Качество в состоянии
-
-`/v1/state` отдаёт `quality` (запрошенное/фактическое качество: `lossless`,
-`hq`, `nq`, `lq`, `cache`) и `codec` (`flac-mp4`, `aac256-mp4`, …). Поля
-обновляются при резолве каждого трека, поэтому панель показывает именно то,
-что играет, а не только то, что записано в конфиге.
-
-Смена на лету — команда `quality {value}` (пишет `[playback] quality` в
-`~/.config/ymd/config.toml`, применяется со следующего трека):
-
-```bash
-ymd quality            # показать текущее
-ymd quality hq         # переключить
-curl -X POST localhost:8765/v1/cmd -H "X-YMD-Session: $KEY" \
-  -H 'content-type: application/json' -d '{"op":"quality","payload":{"value":"nq"}}'
-```
-
-## Качество звука (lossless)
-
-Проверено на аккаунте: `lossless` доступен и отдаётся как **FLAC в MP4**
-(`codec=flac-mp4`), `hq` → `aac-mp4 256`, `nq` → `aac-mp4 192`.
-
-Настройка — `~/.config/ymd/config.toml`:
+`~/.config/ymd/config.toml` (файл необязателен):
 
 ```toml
 [playback]
 quality = "lossless"   # lossless | hq | nq | lq
-fallback_hq = true     # если lossless недоступен — играть в hq
+fallback_hq = true
 
 [cache]
 limit_mb = 2048
 ```
 
-`quality` читается при каждом резолве URL, поэтому смена не требует перезапуска
-(достаточно поставить следующий трек). Если запрошенное качество недоступно и
-`fallback_hq = true`, демон повторяет запрос в `hq` и пишет warn в лог.
+Смена качества: `ymd quality hq` или команда `quality`; применяется со
+следующего трека, конфиг сохраняется.
 
-Логируется фактический выбор: `stream resolved track=… codec=flac-mp4`.
+## CLI
+
+| Команда | Смысл |
+|---|---|
+| `ymd serve [--port 8765]` | запуск демона |
+| `ymd session-key` | напечатать capability-ключ |
+| `ymd doctor` | проверка окружения |
+| `ymd status [--json]` | снимок состояния |
+| `ymd ctl <op>` | отправить команду |
+| `ymd search "…" [--json]` | поиск |
+| `ymd track <id> [--json]` | метаданные трека |
+| `ymd stream <id> [--quality]` | подписанный URL (отладка) |
+| `ymd quality [value]` | показать/сменить качество |
+| `ymd wave [--json]` | включить «Мою волну» |
+| `ymd download <id>`, `download-album <id>` | офлайн-кэш |
+| `ymd cache list|path|remove|info` | управление кэшем |
+| `ymd auth login|import|status|logout` | авторизация |
+
+## Установка и автозапуск
+
+### .deb
+
+```bash
+bash packaging/build-deb.sh --arch arm64   # или amd64
+sudo apt install ./dist/ymd_0.2.0_arm64.deb \
+                 ./dist/plasma-widget-ymd_0.2.0_all.deb
+systemctl --user enable --now ymd.service
+```
+
+Пакет `ymd` ставит `/usr/bin/ymd` и unit
+`/usr/lib/systemd/user/ymd.service`; `plasma-widget-ymd` — плазмоид в
+`/usr/share/plasma/plasmoids/io.github.pbolkhovitin.ymd`.
+
+### Из репозитория
+
+```bash
+bash scripts/install-user-service.sh
+```
+
+Скрипт собирает release, кладёт бинарь в `~/.local/bin/ymd`, unit — в
+`~/.config/systemd/user/ymd.service`, включает и запускает сервис.
+
+Unit: `ExecStart=%h/.local/bin/ymd serve`, `Restart=on-failure`,
+`RuntimeDirectory=ymd` (`0700`), `WantedBy=default.target`.
+
+## M1–M4: что уже работает
+
+| Этап | Содержание |
+|---|---|
+| M1 | поиск, поток, `search/track/album/artist/stream`, вход по токену |
+| M2 | GStreamer-плеер, исходящий MPRIS, очередь, обложки, качество |
+| M3 | офлайн-кэш `encraw` + AES-CTR, LRU, `download-album` |
+| M4 | «Моя волна» с автодогрузкой, `wave_feedback` |
+
+## Тексты песен (запланировано)
+
+Разведка API выполнена: `GET /tracks/{id}/lyrics?format=TEXT|LRC|RICH_JSON`
+подписывается иначе, чем `file-info`; ответ содержит `downloadUrl` на S3,
+текст забирается вторым GET без авторизации. План: `api::lyrics()`,
+`GET /v1/lyrics`, `ymd lyrics`, кнопка «Текст» в попапе. Детали —
+`notes/lyrics-findings.md`.
+
+## Безопасность
+
+- Слушает только `127.0.0.1`; ключ — 32 hex-символа, `0600`.
+- Плазмоид не хранит токен и не ходит в API Яндекса.
+- `ymd doctor` и логи не печатают токен.
+- В `.deb` зависимости библиотек разрешены через `dpkg-shlibdeps`.

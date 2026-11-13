@@ -1,70 +1,62 @@
 # HANDOFF — состояние и следующий шаг
 
-Обновлено: 2026-11-12. Проект: `~/github/ym-noctalia`.
+Обновлено: 2026-11-13. Проект: `~/omv-leo/Projects/ym-noctalia`.
 
 ## Что это
 
-Клиент Яндекс Музыки для **niri + Noctalia v5**: бар-виджет + панель + Rust-демон.
-Плагины Noctalia — Luau без аудио/крипты/MPRIS, поэтому вся «тяжёлая» часть живёт
-в демоне `ymd`, а плагин говорит с ним по локальному HTTP + SSE.
+Клиент Яндекс Музыки для **KDE Plasma 6**: плазмоид в панели + Rust-демон `ymd`.
+Демон владеет токеном, API, GStreamer-плеером, MPRIS и кэшем. Плазмоид говорит
+с ним по локальному HTTP (`127.0.0.1:8765`) и не видит токен.
 
-## Что уже проверено (факты, не предположения)
+## Что готово
 
-| Проверка | Команда | Результат |
-|---|---|---|
-| сборка | `cargo build -p ymd` | ok, 28 s, без warning'ов |
-| запуск | `./target/debug/ymd serve` | `listening on http://127.0.0.1:8765` |
-| health | `curl :8765/v1/health` | `{"ok":true,"version":"0.1.0"}` |
-| auth | `curl :8765/v1/state` без ключа | `401` |
-| state | с `X-YMD-Session` | полный JSON состояния |
-| cmd | `POST /v1/cmd {"op":"toggle"}` | `{"ok":true,"rev":1}` |
-| SSE | `curl -N /v1/events` | `event: state` раз в секунду |
-| CLI | `ymd status` | читает состояние через сокет |
+| Слой | Состояние |
+|---|---|
+| `ymd` | API, OAuth/импорт токена, GStreamer, MPRIS, кэш, «Моя волна», качество |
+| плазмоид | компакт в панели, попап, поиск, очередь, транспорт, seek, режимы |
+| упаковка | `ymd_0.2.0_amd64.deb`, `plasma-widget-ymd_0.2.0_all.deb`, systemd --user |
+| документация | README, docs/01–09, AGENTS, notes переписаны под KDE |
 
-Ключ: `$XDG_RUNTIME_DIR/ymd/session.key` (32 hex, `0600`).
+Факты порта и грабли: `notes/kde-port-findings.md`. План: `docs/superpowers/plans/2026-11-13-kde-plasmoid-port.md`.
 
-## Что НЕ проверено (это и есть P0)
+## Проверки
 
-Плагинная половина — требует запущенного Noctalia и niri:
+```bash
+bash packaging/run-tests.sh                 # 27 тестов в Docker (amd64)
+node --test plasmoid/tests/format.test.js   # 6 тестов
+bash scripts/docs-check.sh                  # ok
+bash scripts/check-env.sh                   # окружение KDE/ymd
+```
 
-1. **S1** — версия Noctalia и максимальный `plugin_api` (в манифесте стоит 35).
-2. **S2** — реальные методы `barWidget.*` (виджет `probe` печатает дамп в лог).
-3. **S3** — работает ли `ui.*` в бар-виджете и панели.
-4. **S4** — `noctalia.httpStream` (демонная сторона SSE уже подтверждена).
-5. **S5** — читается ли `session.key` из `$XDG_RUNTIME_DIR` через `readFile`.
-6. **S6–S9** — MPRIS, GStreamer, niri IPC, свой OAuth.
+Сборка пакетов:
 
-Порядок и команды: `docs/09-p0-spikes.md`. Результаты писать в
-`notes/p0-findings.md` (шаблон готов).
+```bash
+bash packaging/build-deb.sh --arch amd64
+bash packaging/build-deb.sh --arch arm64
+```
+
+Установка на целевую машину:
+
+```bash
+sudo apt install ./dist/ymd_0.2.0_arm64.deb ./dist/plasma-widget-ymd_0.2.0_all.deb
+systemctl --user enable --now ymd
+ymd auth login
+```
+
+Плазмоид добавляется через «Добавить виджеты» → Yandex Music.
 
 ## Следующий шаг
 
-```bash
-cd ~/github/ym-noctalia
-cargo run -p ymd -- serve          # терминал 1
-bash scripts/dev-install.sh        # плагин как drop-in
-bash scripts/p0-check.sh
-journalctl --user -f -o cat | grep -iE "\[probe\]|\[bridge\]"
-```
-
-Затем — S6–S9 и M1: GStreamer (`playbin3` → `pipewiresink`), MPRIS, OAuth.
-
-## Зависимости, которых ещё нет
-
-`gstreamer1-devel`, `gstreamer1-plugins-base`, `gstreamer1-plugins-good`,
-`gstreamer1-plugin-libav`, `libsecret-devel`, `playerctl` (для проверок).
-Установка — только с sudo от пользователя.
-
-## Связанный проект
-
-`~/github/yandex-music-research` — реверс-инжиниринг официального клиента:
-API, заголовки, HMAC-подписи `file-info`, `encraw` + AES-CTR, Ynison, OAuth.
-Там же готовые крейты `ym-api` / `ym-auth` / `ym-media` — их код переносится
-в демон на этапе M1.
+1. **Тексты песен** — `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в попапе.
+   Разведка API: `notes/lyrics-findings.md`.
+2. **Докачка после обрыва** — `.part` + `Range`, не начинать с нуля.
+3. **Ynison** — WebSocket-синхронизация между устройствами (опционально).
+4. **Отдельное приложение Qt/Kirigami** — после KDE-порта; тот же демон `ymd`
+   по HTTP, окно вместо плазмоида. Нужна отдельная спека.
 
 ## Правила
 
-- Плагин не видит токен и не ходит в API Яндекса.
-- Цвета — только `noctalia.getColor(...)`, без `#rrggbb`.
+- Плазмоид не видит токен и не ходит в API Яндекса.
+- Цвета — `Kirigami.Theme` / `PlasmaComponents3`, без `#rrggbb`.
 - Ноль анимаций по умолчанию.
-- Факт → `docs/`, гипотеза → `notes/p0-findings.md`.
+- Факт → `docs/`, гипотеза → `notes/`.

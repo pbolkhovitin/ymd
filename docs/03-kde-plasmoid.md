@@ -23,6 +23,7 @@ plasmoid/
 │       ├── main.qml              # PlasmoidItem: ключ, polling, команды
 │       ├── CompactRepresentation.qml
 │       ├── FullRepresentation.qml
+│       ├── TrackRow.qml          # строка результата/очереди
 │       └── format.js             # чистые функции + Node-тесты
 └── tests/format.test.js
 ~~~
@@ -135,6 +136,19 @@ kpackagetool6 --type Plasma/Applet --remove io.github.pbolkhovitin.ymd
 
 После установки добавьте «Yandex Music» на панель. Для работы нужен запущенный
 `ymd serve`; без него виджет показывает `ymd` и ошибку ключа.
+
+## Пакет .deb
+
+`packaging/build-deb.sh` собирает `plasma-widget-ymd_0.2.0_all.deb`:
+плазмоид ставится в `/usr/share/plasma/plasmoids/io.github.pbolkhovitin.ymd`,
+файлы получают режимы `0755`/`0644` (исходники на CIFS отдают `770`/`660`).
+Зависимости: `plasma-workspace`, `qml6-module-org-kde-kirigami`,
+`qml6-module-org-kde-plasma-plasma5support`; рекомендуется `ymd`.
+
+```bash
+bash packaging/build-deb.sh --arch arm64
+sudo apt install ./dist/plasma-widget-ymd_0.2.0_all.deb
+```
 
 ## Ограничения
 
