@@ -70,7 +70,7 @@ bash scripts/dev-install.sh        # плагин в Noctalia (drop-in)
 |---|---|
 | `docs/01-concept.md` | продукт, цели, принципы, режимы, сценарии |
 | `docs/02-architecture.md` | компоненты, потоки, IPC-контракт |
-| `docs/03-noctalia-plugin.md` | манифест, entries, API, адаптивность |
+| `docs/03-kde-plasmoid.md` | пакет Plasma, ключ, polling, компактный виджет |
 | `docs/04-daemon.md` | Rust-демон: модули, MPRIS, GStreamer, кэш, niri |
 | `docs/05-feature-matrix.md` | паритет с официальным клиентом |
 | `docs/06-design.md` | дизайн-язык: токены, состояния, запрет анимаций |

@@ -1,0 +1,17 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Authors": [{"Name": "Pavel Bolkhovitin", "Email": "pbolkhovitin@yandex.ru"}],
+    "Category": "Multimedia",
+    "Description": "Yandex Music client for KDE Plasma 6",
+    "Icon": "audio-x-generic",
+    "Id": "io.github.pbolkhovitin.ymd",
+    "License": "MIT",
+    "Name": "Yandex Music",
+    "Version": "0.2.0",
+    "Website": "https://github.com/pbolkhovitin/ym-noctalia"
+  },
+  "X-Plasma-API": "declarativeappletscript",
+  "X-Plasma-API-Minimum-Version": "6.0",
+  "X-Plasma-MainScript": "ui/main.qml"
+}

@@ -38,3 +38,10 @@
   см. `packaging/run-tests.sh`.
 - `ymd session-key` печатает тот же ключ, что лежит в
   `$XDG_RUNTIME_DIR/ymd/session.key`.
+- Целевая машина `root@10.42.66.66`: Ubuntu 26.04, aarch64, Plasma 6,
+  сессия root на Wayland. Плазмоид установлен через `kpackagetool6`, в панель
+  добавлен скриптом `org.kde.PlasmaShell.evaluateScript`:
+  `panels()[0].addWidget("io.github.pbolkhovitin.ymd")`.
+- В отдельном QML-файле (`CompactRepresentation.qml`) нужно явно импортировать
+  `org.kde.plasma.plasmoid`, иначе `Plasmoid` не определён. Ошибка видна в
+  `journalctl --user -u plasma-plasmashell`.

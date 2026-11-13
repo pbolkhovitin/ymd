@@ -9,7 +9,7 @@
 2. `docs/01-concept.md` — зачем и как выглядит.
 3. `docs/02-architecture.md` — компоненты и IPC-контракт.
 4. `docs/09-p0-spikes.md` — что проверяем прямо сейчас (S1–S9).
-5. `docs/03-noctalia-plugin.md` / `docs/04-daemon.md` — детали слоёв.
+5. `docs/03-kde-plasmoid.md` / `docs/04-daemon.md` — детали слоёв.
 6. `notes/p0-findings.md` — факты, добытые на хосте.
 
 ## Состояние кода
