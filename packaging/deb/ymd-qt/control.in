@@ -1,0 +1,20 @@
+Package: ymd-qt
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Pavel Bolkhovitin <pbolkhovitin@yandex.ru>
+Section: sound
+Priority: optional
+Depends: @SHLIBS@,
+ ymd (>= 0.2.0),
+ qml6-module-org-kde-kirigami,
+ qml6-module-qtquick-controls,
+ qml6-module-qtquick-layouts,
+ qml6-module-qtquick-templates,
+ qml6-module-qtquick-window,
+ qml6-module-qtqml,
+ qml6-module-qtqml-workerscript
+Recommends: plasma-workspace
+Description: Standalone Qt/Kirigami client for the ymd daemon
+ Yandex Music desktop application built with Qt Quick and Kirigami.
+ It is a thin client: the ymd daemon owns authentication, the Yandex
+ Music API, playback and MPRIS; the app talks to it over local HTTP.

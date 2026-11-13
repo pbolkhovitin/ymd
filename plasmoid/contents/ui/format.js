@@ -26,6 +26,8 @@ function qualityLabel(quality) {
         return "AAC 192";
     case "lq":
         return "AAC 64";
+    case "cache":
+        return "Кэш";
     default:
         return quality;
     }
