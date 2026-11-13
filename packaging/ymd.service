@@ -1,0 +1,23 @@
+[Unit]
+Description=ymd — Yandex Music daemon (Noctalia/niri)
+Documentation=https://github.com/pbolkhovitin/ym-noctalia
+# Звук: нужен PipeWire (GStreamer идёт в него через autoaudiosink).
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+# MPRIS и keyring живут на session bus, он доступен менеджеру пользователя.
+After=dbus.socket
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ymd serve
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=ymd=info
+# $XDG_RUNTIME_DIR/ymd: capability-ключ (0600), каталог удаляется при остановке.
+RuntimeDirectory=ymd
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

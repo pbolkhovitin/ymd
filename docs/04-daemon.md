@@ -178,26 +178,75 @@ compact_on_battery = true
 enabled = false
 ~~~
 
-## systemd (user)
+## systemd (user): автозапуск
+
+Демон ставится как **пользовательский** сервис: он стартует вместе с сессией
+пользователя (при входе в niri), а не на этапе загрузки ОС. Это осознанно —
+MPRIS и keyring живут на session bus, которого до логина нет.
+
+Установка (сборка + бинарь + юнит + enable):
+
+~~~bash
+bash scripts/install-user-service.sh              # release-сборка и установка
+bash scripts/install-user-service.sh --no-build   # использовать готовый бинарь
+bash scripts/install-user-service.sh --uninstall
+~~~
+
+Скрипт кладёт `ymd` в `~/.local/bin/ymd`, юнит — в `~/.config/systemd/user/ymd.service`,
+затем `daemon-reload` + `enable --now`.
+
+Единица лежит в репозитории: `packaging/ymd.service`.
 
 ~~~ini
 [Unit]
-Description=Yandex Music daemon
-After=network-online.target
-PartOf=graphical-session.target
+Description=ymd — Yandex Music daemon (Noctalia/niri)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+After=dbus.socket
 
 [Service]
 ExecStart=%h/.local/bin/ymd serve
 Restart=on-failure
-RestartSec=1
+RestartSec=2
 Environment=RUST_LOG=ymd=info
+RuntimeDirectory=ymd
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target
 ~~~
 
 `ymd serve` пишет `$XDG_RUNTIME_DIR/ymd/session.key` (`0600`) при старте;
-плазмоид получает ключ командой `ymd session-key` и передаёт его в `X-YMD-Session`.
+клиент получает ключ командой `ymd session-key` и передаёт его в `X-YMD-Session`.
+
+Что из этого следует:
+
+| Решение | Зачем |
+|---|---|
+| `WantedBy=default.target` | старт при входе в сессию; `graphical-session.target` в niri ненадёжен |
+| `After=pipewire.service` | GStreamer подключается к уже поднятому PipeWire |
+| `RuntimeDirectory=ymd` | `$XDG_RUNTIME_DIR/ymd` (0700) создаётся systemd, ключ пересоздаётся при каждом старте и каталог удаляется при остановке |
+| `Restart=on-failure` | падение не оставляет бар/панель без демона |
+| нет `loginctl enable-linger` | сервис сессионный: без сессии нет MPRIS и keyring |
+
+Токен читается **лениво**, при первом запросе к API (`secret-tool` через D-Bus),
+поэтому даже если keyring разблокируется позже старта демона — всё заработает.
+
+Клиент переподключается сам: `bridge.luau` повторяет подписку каждые 5 с, пока
+SSE-хендл пуст, а виджет показывает `ymd off`. После `systemctl --user restart ymd`
+бар восстанавливается без перезапуска Noctalia.
+
+Проверка после перезагрузки:
+
+~~~bash
+systemctl --user is-enabled ymd      # enabled
+systemctl --user is-active ymd       # active
+ls -l $XDG_RUNTIME_DIR/ymd/          # session.key, 0600
+curl -s localhost:8765/v1/health     # {"ok":true,...}
+playerctl --list-all                 # в списке есть ymd
+~~~
 
 ## CLI
 

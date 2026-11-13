@@ -78,6 +78,19 @@ bash scripts/dev-install.sh        # плагин в Noctalia (drop-in)
 | `docs/08-risks.md` | риски, открытые вопросы, decision log |
 | `docs/09-p0-spikes.md` | пошаговые проверки P0 с командами |
 
+## Автозапуск
+
+Демон работает как пользовательский systemd-сервис и стартует при входе в сессию:
+
+```bash
+bash scripts/install-user-service.sh        # собрать release и установить
+systemctl --user status ymd                 # состояние
+journalctl --user -u ymd -f                 # логи
+```
+
+Юнит — `packaging/ymd.service` (PipeWire как зависимость, `Restart=on-failure`,
+`RuntimeDirectory=ymd`). Плагин переподключается к демону сам.
+
 ## Статус
 
 Репозиторий: https://github.com/pbolkhovitin/ym-noctalia (private).

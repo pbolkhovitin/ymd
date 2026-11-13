@@ -33,6 +33,7 @@
 | `daemon/src/cache.rs` | офлайн-кэш `encraw` + AES-CTR | M3 ✅ (базово) |
 | `daemon/src/config.rs` | настройки: качество звука, лимит кэша | M2 ✅ |
 | `daemon/src/doctor.rs` | проверка окружения (`ymd doctor`), KDE/apt | готов |
+| `packaging/ymd.service` + `scripts/install-user-service.sh` | автозапуск (systemd --user) | ✅ |
 
 ## Ограничения окружения агента
 
@@ -110,6 +111,8 @@ M4: «Моя волна» готова — `ymd wave`, кнопка в пане�
 от `file-info`, текст отдаётся ссылкой на S3. Код не начат.
 Качество: `ymd quality`, команда `quality` в `/v1/cmd`, поля `quality`/`codec`
 в состоянии, индикатор и переключатель в панели.
+Автозапуск: `packaging/ymd.service`, установка `scripts/install-user-service.sh`
+(бинарь в `~/.local/bin/ymd`, старт при входе, `Restart=on-failure`).
 Дальше: тексты (демон + CLI + панель), докачка после обрыва, Ynison.
 
 Связанный проект: `~/github/yandex-music-research` — реверс-инжиниринг официального
