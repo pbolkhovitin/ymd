@@ -5,6 +5,7 @@
 
 use std::convert::Infallible;
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 
 use axum::{
     extract::{Query, State as AxumState},
@@ -27,6 +28,33 @@ struct Shared {
     app: AppState,
     key: String,
     started: std::time::Instant,
+    /// Текущий Device Flow. Один на демон: второй вход отклоняется.
+    auth: Arc<Mutex<AuthFlow>>,
+}
+
+/// Состояние входа через OAuth Device Flow.
+#[derive(Debug, Clone, Default)]
+struct AuthFlow {
+    /// `idle` | `pending` | `authorized` | `expired` | `error` | `cancelled`.
+    state: String,
+    user_code: String,
+    url: String,
+    expires_in: u64,
+    login: Option<String>,
+    error: Option<String>,
+}
+
+impl AuthFlow {
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "state": if self.state.is_empty() { "idle" } else { &self.state },
+            "userCode": self.user_code,
+            "url": self.url,
+            "expiresIn": self.expires_in,
+            "login": self.login,
+            "error": self.error,
+        })
+    }
 }
 
 pub async fn serve(
@@ -38,6 +66,7 @@ pub async fn serve(
         app,
         key,
         started: std::time::Instant::now(),
+        auth: Arc::new(Mutex::new(AuthFlow::default())),
     };
 
     let router = Router::new()
@@ -46,7 +75,22 @@ pub async fn serve(
         .route("/v1/search", get(search))
         .route("/v1/playlists", get(playlists))
         .route("/v1/playlist", get(playlist))
+        .route("/v1/favorites", get(favorites))
+        .route("/v1/home", get(home))
+        .route("/v1/discovery/metatags", get(metatags))
+        .route("/v1/discovery/genres", get(genres))
+        .route("/v1/discovery/tag", get(tag_page))
+        .route("/v1/radio", post(radio))
         .route("/v1/cache", get(cache_info))
+        .route("/v1/config", get(config_get).patch(config_patch))
+        .route("/v1/account", get(account))
+        .route(
+            "/v1/auth/device",
+            post(auth_device_start)
+                .get(auth_device_status)
+                .delete(auth_device_cancel),
+        )
+        .route("/v1/auth/logout", post(auth_logout))
         .route("/v1/cmd", post(cmd))
         .route("/v1/events", get(events))
         .with_state(shared);
@@ -96,7 +140,11 @@ async fn cmd(
         ));
     }
 
-    match shared.app.command_async(&request.op, request.payload.as_ref()).await {
+    match shared
+        .app
+        .command_async(&request.op, request.payload.as_ref())
+        .await
+    {
         Ok(rev) => Ok(Json(serde_json::json!({ "ok": true, "rev": rev }))),
         Err(err) => Err((StatusCode::BAD_REQUEST, err)),
     }
@@ -165,7 +213,9 @@ async fn playlists(
         .map(|items| {
             items
                 .iter()
-                .filter(|item| item.get("available").and_then(serde_json::Value::as_bool) != Some(false))
+                .filter(|item| {
+                    item.get("available").and_then(serde_json::Value::as_bool) != Some(false)
+                })
                 .map(|item| simplify_playlist(item, account.uid))
                 .collect()
         })
@@ -210,6 +260,533 @@ async fn playlist(
     })))
 }
 
+/// `GET /v1/favorites` — «Мне нравится» (плейлист `kind = 3`).
+async fn favorites(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let account = crate::auth::load_account().ok_or_else(no_account)?;
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .playlist(account.uid, 3)
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+
+    let tracks: Vec<serde_json::Value> = value
+        .get("tracks")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.iter().filter_map(simplify_track).collect())
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "playlist": simplify_playlist(&value, account.uid),
+        "tracks": tracks,
+    })))
+}
+
+/// `GET /v1/home` — блоки главной, нормализованные для клиентов.
+async fn home(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .landing()
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+    Ok(Json(serde_json::json!({ "blocks": home_blocks(&value) })))
+}
+
+/// `GET /v1/discovery/metatags` — деревья настроений, занятий, жанров, эпох.
+async fn metatags(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .metatags()
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+
+    let trees = value
+        .pointer("/result/trees")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let groups: Vec<serde_json::Value> = trees
+        .iter()
+        .map(|tree| {
+            let leaves = tree
+                .get("leaves")
+                .and_then(serde_json::Value::as_array)
+                .map(|leaves| tag_nodes(leaves))
+                .unwrap_or_default();
+            serde_json::json!({
+                "id": tree.get("navigationId").and_then(serde_json::Value::as_str).unwrap_or(""),
+                "title": tree.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+                "tags": leaves,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "groups": groups })))
+}
+
+/// `GET /v1/discovery/genres` — жанры с поджанрами.
+async fn genres(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .genres()
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+
+    let items = value
+        .get("result")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let genres: Vec<serde_json::Value> = items
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(serde_json::Value::as_str)?;
+            let sub: Vec<serde_json::Value> = item
+                .get("subGenres")
+                .and_then(serde_json::Value::as_array)
+                .map(|subs| {
+                    subs.iter()
+                        .filter_map(|sub| {
+                            Some(serde_json::json!({
+                                "id": sub.get("id").and_then(serde_json::Value::as_str)?,
+                                "title": sub.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "id": id,
+                "title": item.get("title").and_then(serde_json::Value::as_str).unwrap_or(id),
+                "subGenres": sub,
+                "station": format!("genre:{id}"),
+            }))
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "genres": genres })))
+}
+
+#[derive(Deserialize)]
+struct TagParams {
+    tag: String,
+}
+
+/// `GET /v1/discovery/tag?tag=...` — плейлисты тега и станция для радио.
+async fn tag_page(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+    Query(params): Query<TagParams>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let tag = params.tag.trim();
+    if tag.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "нужен tag".to_string()));
+    }
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .metatag_playlists(tag)
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+    let result = value.get("result").unwrap_or(&value);
+
+    let playlists: Vec<serde_json::Value> = result
+        .get("playlists")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| simplify_playlist(item, 0))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "tag": tag,
+        "title": text_of(result.get("title")).unwrap_or_else(|| tag.to_string()),
+        "station": result.get("stationId").and_then(serde_json::Value::as_str),
+        "playlists": playlists,
+    })))
+}
+
+#[derive(Deserialize)]
+struct RadioBody {
+    station: String,
+}
+
+/// `POST /v1/radio` — запустить радио по станции.
+async fn radio(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<RadioBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let station = body.station.trim().to_string();
+    if station.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "нужна station".to_string()));
+    }
+    shared
+        .app
+        .radio_start(&station)
+        .await
+        .map_err(|err| bad_gateway(err))?;
+    Ok(Json(serde_json::json!({ "ok": true, "station": station })))
+}
+
+/// `GET /v1/config` — эффективные настройки демона.
+async fn config_get(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !authorized(&headers, &shared.key) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(crate::config::as_json()))
+}
+
+/// `PATCH /v1/config` — точечно меняет качество, фоллбэк и лимит кэша.
+async fn config_patch(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let quality = body.get("quality").and_then(serde_json::Value::as_str);
+    let fallback = body.get("fallbackHq").and_then(serde_json::Value::as_bool);
+    let limit = body.get("cacheLimitMb").and_then(serde_json::Value::as_u64);
+
+    crate::config::patch(quality, fallback, limit)
+        .map_err(|err| (StatusCode::BAD_REQUEST, format!("config: {err}")))?;
+    shared.app.refresh();
+    Ok(Json(crate::config::as_json()))
+}
+
+/// `GET /v1/account` — кто вошёл и есть ли Plus.
+async fn account(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let account = crate::auth::load_account().ok_or_else(no_account)?;
+    Ok(Json(serde_json::json!({
+        "login": account.login,
+        "uid": account.uid,
+        "plus": account.has_plus,
+        "backend": account.backend,
+        "savedAt": account.saved_at,
+    })))
+}
+
+/// `POST /v1/auth/device` — начать вход через Device Flow.
+async fn auth_device_start(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    {
+        let flow = shared.auth.lock().map_err(|_| poisoned())?;
+        if flow.state == "pending" {
+            return Err((StatusCode::CONFLICT, "вход уже идёт".to_string()));
+        }
+    }
+
+    let code = crate::oauth::request_device_code()
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+
+    {
+        let mut flow = shared.auth.lock().map_err(|_| poisoned())?;
+        flow.state = "pending".to_string();
+        flow.user_code = code.user_code.clone();
+        flow.url = code.verification_url.clone();
+        flow.expires_in = code.expires_in;
+        flow.login = None;
+        flow.error = None;
+    }
+
+    let flow_ref = shared.auth.clone();
+    let app = shared.app.clone();
+    tokio::spawn(async move {
+        let mut state = "error".to_string();
+        let mut login = None;
+        let mut error = None;
+
+        match crate::oauth::poll_token(&code).await {
+            Ok(Some(token)) => match crate::auth::validate(&token.access_token).await {
+                Ok(account) => match crate::auth::save(&account, &token.access_token) {
+                    Ok(saved) => {
+                        state = "authorized".to_string();
+                        login = Some(saved.login);
+                    }
+                    Err(err) => error = Some(err.to_string()),
+                },
+                Err(err) => error = Some(err.to_string()),
+            },
+            Ok(None) => state = "expired".to_string(),
+            Err(err) => error = Some(err.to_string()),
+        }
+
+        let mut published = false;
+        if let Ok(mut flow) = flow_ref.lock() {
+            // Отмена: поздний ответ OAuth не должен никого авторизовать.
+            if flow.state == "pending" {
+                flow.state = state.clone();
+                flow.login = login;
+                flow.error = error;
+                published = state == "authorized";
+            }
+        }
+        if published {
+            app.refresh();
+        }
+    });
+
+    let flow = shared.auth.lock().map_err(|_| poisoned())?;
+    Ok(Json(flow.json()))
+}
+
+/// `GET /v1/auth/device` — состояние текущего входа.
+async fn auth_device_status(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let flow = shared.auth.lock().map_err(|_| poisoned())?;
+    Ok(Json(flow.json()))
+}
+
+/// `DELETE /v1/auth/device` — отменить ожидание.
+async fn auth_device_cancel(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let mut flow = shared.auth.lock().map_err(|_| poisoned())?;
+    if flow.state == "pending" {
+        flow.state = "cancelled".to_string();
+        flow.user_code.clear();
+    }
+    Ok(Json(flow.json()))
+}
+
+/// `POST /v1/auth/logout` — удалить токен и метаданные аккаунта.
+async fn auth_logout(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+    let removed = crate::auth::logout()
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    shared.app.refresh();
+    Ok(Json(
+        serde_json::json!({ "loggedOut": true, "removed": removed }),
+    ))
+}
+
+fn unauthorized() -> (StatusCode, String) {
+    (StatusCode::UNAUTHORIZED, "bad session".to_string())
+}
+
+fn no_account() -> (StatusCode, String) {
+    (StatusCode::UNAUTHORIZED, "нет аккаунта".to_string())
+}
+
+fn bad_gateway(message: String) -> (StatusCode, String) {
+    (StatusCode::BAD_GATEWAY, message)
+}
+
+fn poisoned() -> (StatusCode, String) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "auth flow poisoned".to_string(),
+    )
+}
+
+/// Текст из строки или `{title}`.
+fn text_of(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?;
+    value.as_str().map(str::to_string).or_else(|| {
+        value
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    })
+}
+
+fn id_of(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_u64()
+        .map(|num| num.to_string())
+        .or_else(|| value.as_str().map(str::to_string))
+}
+
+/// Рекурсивно превращает листья метатегов в `{tag, title, children}`.
+fn tag_nodes(leaves: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    leaves
+        .iter()
+        .filter_map(|leaf| {
+            let tag = leaf.get("tag").and_then(serde_json::Value::as_str)?;
+            let children = leaf
+                .get("leaves")
+                .and_then(serde_json::Value::as_array)
+                .map(|leaves| tag_nodes(leaves))
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "tag": tag,
+                "title": leaf.get("title").and_then(serde_json::Value::as_str).unwrap_or(tag),
+                "children": children,
+            }))
+        })
+        .collect()
+}
+
+/// Нормализует блоки `/landing3`. Неизвестные типы пропускаются: лучше меньше
+/// блоков, чем сломанный экран.
+fn home_blocks(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    let blocks = value
+        .pointer("/result/blocks")
+        .or_else(|| value.get("blocks"))
+        .and_then(serde_json::Value::as_array);
+
+    let mut out = Vec::new();
+    for block in blocks.cloned().unwrap_or_default() {
+        let mut items = Vec::new();
+        if let Some(entities) = block.get("entities").and_then(serde_json::Value::as_array) {
+            for entity in entities {
+                let entity_type = entity
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let data = entity
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let (kind, object) = match entity_type {
+                    "album" => ("album", data),
+                    "playlist" => ("playlist", data),
+                    "personal-playlist" => (
+                        "playlist",
+                        data.get("data").cloned().unwrap_or(serde_json::Value::Null),
+                    ),
+                    "chart-item" => (
+                        "track",
+                        data.get("track")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                    ),
+                    _ => continue,
+                };
+                if let Some(item) = home_item(kind, &object) {
+                    items.push(item);
+                }
+            }
+        }
+        if items.is_empty() {
+            continue;
+        }
+        out.push(serde_json::json!({
+            "id": block.get("id").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "title": block.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "type": block.get("type").and_then(serde_json::Value::as_str).unwrap_or(""),
+            "items": items,
+        }));
+    }
+    out
+}
+
+fn home_item(kind: &str, object: &serde_json::Value) -> Option<serde_json::Value> {
+    match kind {
+        "track" => simplify_track(object),
+        "playlist" => {
+            let uid = object.get("uid").and_then(serde_json::Value::as_u64)?;
+            let playlist_kind = object.get("kind").and_then(serde_json::Value::as_u64)?;
+            Some(serde_json::json!({
+                "id": format!("{uid}:{playlist_kind}"),
+                "kind": "playlist",
+                "uid": uid,
+                "playlistKind": playlist_kind,
+                "title": object.get("title").and_then(serde_json::Value::as_str).unwrap_or("Плейлист"),
+                "subtitle": object.pointer("/owner/name").and_then(serde_json::Value::as_str).unwrap_or(""),
+                "cover": object
+                    .pointer("/cover/uri")
+                    .or_else(|| object.pointer("/cover/itemsUri/0"))
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::state::cover_url),
+                "trackCount": object.get("trackCount").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            }))
+        }
+        "album" => {
+            let id = object.get("id").and_then(id_of)?;
+            let artists: Vec<String> = object
+                .get("artists")
+                .and_then(serde_json::Value::as_array)
+                .map(|artists| {
+                    artists
+                        .iter()
+                        .filter_map(|artist| {
+                            artist
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "id": id,
+                "kind": "album",
+                "title": object.get("title").and_then(serde_json::Value::as_str).unwrap_or("Альбом"),
+                "subtitle": artists.join(", "),
+                "cover": object
+                    .get("coverUri")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::state::cover_url),
+                "year": object.get("year").and_then(serde_json::Value::as_u64),
+            }))
+        }
+        _ => None,
+    }
+}
+
 /// `GET /v1/cache` — содержимое офлайн-кэша и лимит.
 async fn cache_info(
     AxumState(shared): AxumState<Shared>,
@@ -243,13 +820,11 @@ fn simplify_track(item: &serde_json::Value) -> Option<serde_json::Value> {
         .get("originalIndex")
         .and_then(serde_json::Value::as_u64);
     let item = item.get("track").unwrap_or(item);
-    let id = item
-        .get("id")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n.to_string())
-                .or_else(|| v.as_str().map(str::to_string))
-        })?;
+    let id = item.get("id").and_then(|v| {
+        v.as_u64()
+            .map(|n| n.to_string())
+            .or_else(|| v.as_str().map(str::to_string))
+    })?;
     let title = item
         .get("title")
         .and_then(serde_json::Value::as_str)
@@ -437,6 +1012,38 @@ pub fn body_of(response: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_block_unwraps_personal_playlist_and_skips_unknown() {
+        let value = serde_json::json!({
+            "result": { "blocks": [{
+                "id": "b1", "title": "Собираем для вас", "type": "personal-playlists",
+                "entities": [
+                    { "type": "personal-playlist", "data": { "data": {
+                        "uid": 42, "kind": 1036, "title": "Мой микс", "trackCount": 7,
+                        "owner": { "name": "Я" },
+                        "cover": { "itemsUri": ["avatars.yandex.net/get/1/%%"] }
+                    }}},
+                    { "type": "promotion", "data": { "title": "Реклама" } }
+                ]
+            }]}
+        });
+        let blocks = home_blocks(&value);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(blocks[0]["items"][0]["id"], "42:1036");
+        assert_eq!(blocks[0]["items"][0]["title"], "Мой микс");
+    }
+
+    #[test]
+    fn tag_nodes_keep_nested_children() {
+        let leaves = serde_json::json!([
+            { "tag": "Рок", "title": "Рок", "leaves": [{ "tag": "Панк", "title": "Панк" }] }
+        ]);
+        let nodes = tag_nodes(leaves.as_array().unwrap());
+        assert_eq!(nodes[0]["title"], "Рок");
+        assert_eq!(nodes[0]["children"][0]["tag"], "Панк");
+    }
 
     #[test]
     fn playlist_cover_and_id_are_normalized() {

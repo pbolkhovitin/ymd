@@ -110,7 +110,9 @@ impl Queue {
 fn move_queue_item(state: &mut State, from: usize, to: usize) -> Result<(), String> {
     let len = state.queue.items.len();
     if from >= len || to >= len {
-        return Err(format!("queue_move: нет индекса {from}->{to} (в очереди {len})"));
+        return Err(format!(
+            "queue_move: нет индекса {from}->{to} (в очереди {len})"
+        ));
     }
     if from == to {
         return Ok(());
@@ -173,6 +175,9 @@ pub struct WaveInfo {
     pub session_id: String,
     pub batch_id: Option<String>,
     pub active: bool,
+    /// Станция ротора (`genre:rock`, `mood:calm`, `artist:42`). `None` — «Моя волна».
+    #[serde(default)]
+    pub station: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,7 +272,8 @@ fn save_persisted(state: &State) -> Result<(), String> {
     };
     let path = state_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| format!("создать {}: {err}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("создать {}: {err}", parent.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
     let data = serde_json::to_vec_pretty(&persisted).map_err(|err| err.to_string())?;
@@ -362,7 +368,11 @@ impl AppState {
             return;
         }
         st.rev += 1;
-        tracing::info!(tracks = st.queue.items.len(), position = st.position_ms, "state restored");
+        tracing::info!(
+            tracks = st.queue.items.len(),
+            position = st.position_ms,
+            "state restored"
+        );
     }
 
     /// Сохраняет очередь и позицию на диск (best effort).
@@ -1015,6 +1025,11 @@ impl AppState {
         Ok(snapshot.rev)
     }
 
+    /// Публично обновляет ревизию: например, после входа в аккаунт.
+    pub fn refresh(&self) {
+        self.bump();
+    }
+
     /// Увеличивает ревизию состояния и рассылает его подписчикам.
     fn bump(&self) {
         if let Ok(mut st) = self.inner.write() {
@@ -1138,23 +1153,15 @@ impl AppState {
             let quality = crate::config::quality();
             let progress_app = self.clone();
             let progress_id = id.clone();
-            let result = crate::cache::download(
-                &client,
-                &track,
-                quality,
-                move |bytes, total| {
-                    if let Ok(mut st) = progress_app.inner.write() {
-                        if let Some(item) = st
-                            .downloads
-                            .iter_mut()
-                            .find(|item| item.id == progress_id)
-                        {
-                            item.bytes = bytes;
-                            item.total = total;
-                        }
+            let result = crate::cache::download(&client, &track, quality, move |bytes, total| {
+                if let Ok(mut st) = progress_app.inner.write() {
+                    if let Some(item) = st.downloads.iter_mut().find(|item| item.id == progress_id)
+                    {
+                        item.bytes = bytes;
+                        item.total = total;
                     }
-                },
-            )
+                }
+            })
             .await;
 
             match result {
@@ -1242,13 +1249,29 @@ impl AppState {
 
     /// Включена ли «Моя волна».
     pub fn wave_active(&self) -> bool {
-        self.snapshot().wave.map(|wave| wave.active).unwrap_or(false)
+        self.snapshot()
+            .wave
+            .map(|wave| wave.active)
+            .unwrap_or(false)
     }
 
     /// Новая сессия «Моей волны»: очередь заменяется партией радио.
     pub async fn wave_start(&self) -> Result<u64, String> {
+        self.start_radio(None).await
+    }
+
+    /// Радио по станции: жанр, настроение, артист.
+    pub async fn radio_start(&self, station: &str) -> Result<u64, String> {
+        self.start_radio(Some(station)).await
+    }
+
+    async fn start_radio(&self, station: Option<&str>) -> Result<u64, String> {
         let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
-        let batch = client.wave_start().await.map_err(|err| err.to_string())?;
+        let batch = match station {
+            Some(station) => client.station_start(station).await,
+            None => client.wave_start().await,
+        }
+        .map_err(|err| err.to_string())?;
 
         if batch.session_id.is_empty() || batch.tracks.is_empty() {
             return Err("волна: пустой ответ".to_string());
@@ -1275,9 +1298,12 @@ impl AppState {
                 session_id: batch.session_id.clone(),
                 batch_id: batch.batch_id.clone(),
                 active: true,
+                station: station.map(str::to_string),
             });
             st.rev += 1;
-            let _ = self.tx.send(serde_json::to_string(&*st).unwrap_or_default());
+            let _ = self
+                .tx
+                .send(serde_json::to_string(&*st).unwrap_or_default());
         }
 
         // `Box::pin` разрывает рекурсию async-функций (`command_async` ↔ `wave_start`).
@@ -1327,7 +1353,9 @@ impl AppState {
         }
         st.rev += 1;
         let rev = st.rev;
-        let _ = self.tx.send(serde_json::to_string(&*st).unwrap_or_default());
+        let _ = self
+            .tx
+            .send(serde_json::to_string(&*st).unwrap_or_default());
         Ok(rev)
     }
 
@@ -1359,7 +1387,11 @@ impl AppState {
     /// Сколько треков осталось до конца очереди.
     pub fn queue_remaining(&self) -> usize {
         let state = self.snapshot();
-        state.queue.items.len().saturating_sub(state.queue.index + 1)
+        state
+            .queue
+            .items
+            .len()
+            .saturating_sub(state.queue.index + 1)
     }
 
     /// Синхронизирует состояние с локальным плеером. Возвращает ревизию.
@@ -1381,8 +1413,7 @@ impl AppState {
             } else {
                 "paused"
             };
-            let changed =
-                st.status != status || st.position_ms.abs_diff(position_ms) > 1500;
+            let changed = st.status != status || st.position_ms.abs_diff(position_ms) > 1500;
             st.status = status.to_string();
             st.position_ms = position_ms;
             if changed {
@@ -1726,12 +1757,11 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         .unwrap_or_default();
 
     let duration_ms = field("durationMs").and_then(Value::as_u64).unwrap_or(0);
-    let album = field("album")
-        .and_then(|v| {
-            v.as_str().map(str::to_string).or_else(|| {
-                v.get("title").and_then(Value::as_str).map(str::to_string)
-            })
-        });
+    let album = field("album").and_then(|v| {
+        v.as_str()
+            .map(str::to_string)
+            .or_else(|| v.get("title").and_then(Value::as_str).map(str::to_string))
+    });
     let album_id = field("albumId")
         .or_else(|| field("album_id"))
         .or_else(|| value.pointer("/albums/0/id"))
@@ -1930,18 +1960,24 @@ mod tests {
     #[test]
     fn queue_move_keeps_current_track_selected() {
         let app = AppState::new();
-        app.command("queue_set", Some(&serde_json::json!({
-            "tracks": [
-                { "id": "1", "title": "One" },
-                { "id": "2", "title": "Two" },
-                { "id": "3", "title": "Three" }
-            ],
-            "index": 1
-        })))
+        app.command(
+            "queue_set",
+            Some(&serde_json::json!({
+                "tracks": [
+                    { "id": "1", "title": "One" },
+                    { "id": "2", "title": "Two" },
+                    { "id": "3", "title": "Three" }
+                ],
+                "index": 1
+            })),
+        )
         .unwrap();
 
-        app.command("queue_move", Some(&serde_json::json!({ "from": 1, "to": 2 })))
-            .unwrap();
+        app.command(
+            "queue_move",
+            Some(&serde_json::json!({ "from": 1, "to": 2 })),
+        )
+        .unwrap();
         let state = app.snapshot();
         assert_eq!(state.queue.items[2].id, "2");
         assert_eq!(state.queue.index, 2);

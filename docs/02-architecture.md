@@ -113,6 +113,19 @@
 | GET | `/v1/search?q=&page=` | поиск, `{query, tracks: [...]}` |
 | GET | `/v1/playlists` | плейлисты пользователя, `{playlists: [...]}` |
 | GET | `/v1/playlist?uid=&kind=` | плейлист и треки, `{playlist, tracks: [...]}` |
+| GET | `/v1/favorites` | «Мне нравится» (`kind = 3`): `{playlist, tracks}` |
+| GET | `/v1/home` | блоки главной: `{blocks: [{id, title, type, items}]}` |
+| GET | `/v1/discovery/metatags` | деревья настроений/занятий/жанров/эпох |
+| GET | `/v1/discovery/genres` | жанры и поджанры, `station` для радио |
+| GET | `/v1/discovery/tag?tag=` | плейлисты тега + `station` |
+| POST | `/v1/radio` | `{station}` — запустить радио (`genre:rock`, `mood:calm`, `artist:42`) |
+| GET | `/v1/config` | эффективные настройки демона |
+| PATCH | `/v1/config` | `{quality?, fallbackHq?, cacheLimitMb?}` |
+| GET | `/v1/account` | `{login, uid, plus, backend, savedAt}` или 401 |
+| POST | `/v1/auth/device` | начать вход по Device Flow: `{state, userCode, url, expiresIn}` |
+| GET | `/v1/auth/device` | состояние входа (`pending/authorized/expired/…`) |
+| DELETE | `/v1/auth/device` | отменить ожидание |
+| POST | `/v1/auth/logout` | удалить токен и метаданные аккаунта |
 | GET | `/v1/cache` | `{items, totalBytes, limitBytes, dir}` |
 | POST | `/v1/cmd` | `{op, payload}` — команда |
 | GET | `/v1/events` | SSE: события состояния (использует `bridge.luau`) |

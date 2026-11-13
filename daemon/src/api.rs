@@ -187,6 +187,52 @@ impl Client {
         Ok(())
     }
 
+    /// Блоки главной страницы.
+    pub async fn landing(&self) -> Result<Value, ApiError> {
+        // `blocks` обязателен: без него API отвечает ошибкой валидации.
+        const BLOCKS: &str =
+            "personal-playlists,promotions,new-releases,new-playlists,mixes,chart,albums,playlists";
+        self.get("/landing3", &[("blocks", BLOCKS.to_string())])
+            .await
+    }
+
+    /// Дерево метатегов: настроения, занятия, жанры, эпохи.
+    pub async fn metatags(&self) -> Result<Value, ApiError> {
+        self.get("/landing3/metatags", &[]).await
+    }
+
+    /// Жанры с поджанрами и иконками.
+    pub async fn genres(&self) -> Result<Value, ApiError> {
+        self.get("/genres", &[]).await
+    }
+
+    /// Страница тега: плейлисты и `stationId` для радио.
+    pub async fn metatag_playlists(&self, tag: &str) -> Result<Value, ApiError> {
+        let encoded = encode_segment(tag);
+        self.get(&format!("/metatags/{encoded}/playlists"), &[])
+            .await
+    }
+
+    /// Новая ротор-сессия для станции (`genre:rock`, `mood:calm`, `artist:42`).
+    pub async fn station_start(&self, station: &str) -> Result<WaveBatch, ApiError> {
+        let value = self
+            .post_json("/rotor/session/new", &json!({ "station": station }))
+            .await?;
+        let result = value.get("result").unwrap_or(&value);
+        Ok(WaveBatch {
+            session_id: result
+                .get("radioSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            batch_id: result
+                .get("batchId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tracks: collect_sequence(result),
+        })
+    }
+
     /// Новая сессия «Моей волны».
     pub async fn wave_start(&self) -> Result<WaveBatch, ApiError> {
         let value = self.post_json("/rotor/session/new", &json!({})).await?;
@@ -267,9 +313,7 @@ impl Client {
 
     #[allow(dead_code)]
     pub async fn album(&self, id: &str) -> Result<Value, ApiError> {
-        let value = self
-            .get(&format!("/albums/{id}/with-tracks"), &[])
-            .await?;
+        let value = self.get(&format!("/albums/{id}/with-tracks"), &[]).await?;
         Ok(unwrap_result(value))
     }
 
@@ -389,10 +433,7 @@ impl Client {
                 .and_then(Value::as_str)
                 .unwrap_or("raw")
                 .to_string(),
-            key: info
-                .get("key")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            key: info.get("key").and_then(Value::as_str).map(str::to_string),
             codec: info
                 .get("codec")
                 .and_then(Value::as_str)
@@ -458,7 +499,8 @@ impl Client {
         );
 
         let entries = value.as_array().cloned().unwrap_or_default();
-        let entry = pick_entry(&entries, quality).ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let entry =
+            pick_entry(&entries, quality).ok_or(ApiError::NoStream(track_id.to_string()))?;
 
         let info_url = entry
             .get("downloadInfoUrl")
@@ -612,6 +654,19 @@ pub struct WaveBatch {
 }
 
 /// Достаёт треки из `result.sequence` — элементы бывают `{"type":"track","track":{…}}`.
+fn encode_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 fn collect_sequence(result: &Value) -> Vec<Value> {
     result
         .get("sequence")

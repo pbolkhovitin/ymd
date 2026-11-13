@@ -21,7 +21,7 @@
 | Путь | Что | Статус |
 |---|---|---|
 | `daemon/src/main.rs` | CLI: `serve`, `session-key`, `doctor`, `status`, `ctl`, … | готов |
-| `daemon/src/httpd.rs` | `/v1/health`, `/v1/state`, `/v1/search`, `/v1/cmd`, `/v1/events` | готов |
+| `daemon/src/httpd.rs` | `/v1/*`: состояние, поиск, главная, discovery, радио, лайки, config, auth | готов |
 | `daemon/src/state.rs` | состояние плеера, очередь, команды, волна | готов |
 | `daemon/src/session.rs` | capability-ключ `0600`, `ymd session-key` | готов |
 | `daemon/src/player.rs` | GStreamer `playbin3` → PipeWire | готов |
@@ -109,10 +109,12 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 1. **Noctalia-панель**: обложка (`cover` в `/v1/state` приходит null), артист в
    баре (хост режет ~22 символа), различимость паузы в баре, err/loading.
-2. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
+2. **UI открытия и входа в клиентах**: главная, жанры/настроения, избранное,
+   экран Device Flow (API уже в демоне — `docs/12-discovery-account.md`).
+3. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
    попапе (разведка — `notes/lyrics-findings.md`).
-3. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
-4. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
+4. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
+5. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
 
 Ограничение `ymd-qt`: меню трея на Wayland может не открываться при вызове
 через DBus (`ContextMenu` без input serial); клик по иконке и средняя кнопка

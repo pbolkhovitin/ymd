@@ -97,9 +97,7 @@ pub fn fallback_hq() -> bool {
 /// Записывает качество в конфиг, сохраняя остальные ключи.
 pub fn set_quality(value: &str) -> Result<(), String> {
     if Quality::parse(value).is_none() {
-        return Err(format!(
-            "неизвестное качество: {value} (lossless|hq|nq|lq)"
-        ));
+        return Err(format!("неизвестное качество: {value} (lossless|hq|nq|lq)"));
     }
 
     let path = path();
@@ -155,6 +153,80 @@ pub fn set_cache_limit(limit_mb: u64) -> Result<(), String> {
         .as_table_mut()
         .ok_or_else(|| "config.toml: [cache] должна быть таблицей".to_string())?;
     cache.insert("limit_mb".to_string(), toml::Value::Integer(limit));
+
+    let text = toml::to_string_pretty(&root).map_err(|err| err.to_string())?;
+    std::fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// Эффективные настройки для `GET /v1/config`.
+pub fn as_json() -> serde_json::Value {
+    let config = load();
+    serde_json::json!({
+        "playback": {
+            "quality": config.playback.quality,
+            "fallbackHq": config.playback.fallback_hq,
+        },
+        "cache": { "limitMb": config.cache.limit_mb },
+        "path": path().display().to_string(),
+    })
+}
+
+/// Точечно меняет настройки, сохраняя остальные ключи файла.
+///
+/// `None` — поле не трогаем. Неизвестное качество отклоняется до записи.
+pub fn patch(
+    quality: Option<&str>,
+    fallback_hq: Option<bool>,
+    limit_mb: Option<u64>,
+) -> Result<(), String> {
+    if let Some(value) = quality {
+        if Quality::parse(value).is_none() {
+            return Err(format!("неизвестное качество: {value} (lossless|hq|nq|lq)"));
+        }
+    }
+    let limit = match limit_mb {
+        Some(value) => Some(i64::try_from(value).map_err(|_| "слишком большой лимит".to_string())?),
+        None => None,
+    };
+
+    let path = path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    }
+
+    let mut root: toml::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| toml::from_str(&text).ok())
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: ожидалась таблица".to_string())?;
+
+    let playback = table
+        .entry("playback")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .ok_or_else(|| "config.toml: [playback] должна быть таблицей".to_string())?;
+    if let Some(value) = quality {
+        playback.insert(
+            "quality".to_string(),
+            toml::Value::String(value.to_string()),
+        );
+    }
+    if let Some(value) = fallback_hq {
+        playback.insert("fallback_hq".to_string(), toml::Value::Boolean(value));
+    }
+
+    if let Some(value) = limit {
+        let cache = table
+            .entry("cache")
+            .or_insert_with(|| toml::Value::Table(Default::default()))
+            .as_table_mut()
+            .ok_or_else(|| "config.toml: [cache] должна быть таблицей".to_string())?;
+        cache.insert("limit_mb".to_string(), toml::Value::Integer(value));
+    }
 
     let text = toml::to_string_pretty(&root).map_err(|err| err.to_string())?;
     std::fs::write(&path, text).map_err(|err| err.to_string())?;

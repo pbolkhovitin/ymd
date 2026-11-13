@@ -439,7 +439,10 @@ function next()
 end
 
 function like()
-  ymd.cmd("like", function() refresh() end)
+  if s.track_id == "" then
+    return
+  end
+  ymd.cmd_payload("like_track", { id = s.track_id, liked = not s.liked }, function() refresh() end)
 end
 
 function hidePanel()
