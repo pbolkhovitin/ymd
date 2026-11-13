@@ -56,7 +56,8 @@ HTTP-клиент с заголовками `x-yandex-music-client`, `x-yandex-m
 `accept-language`; ретраи 429/5xx; толерантный разбор JSON.
 
 Реализовано: `search`, `track`, `album`, `artist`, `playlists`, `playlist`,
-`likes`, `stream`, `encraw`, `wave_start`, `wave_more`, `wave_feedback`.
+`likes`, `stream`, `encraw`, `wave_start`, `wave_more`, `wave_feedback`,
+`create_playlist`, `delete_playlist`, `change_playlist`, `like_track`.
 
 Прямой поток: `/get-file-info` с парой «заголовок клиента + ключ», ответ —
 `result.downloadInfo.url` (CDN `strm.yandex.net`). Качества: `lossless` →
@@ -146,13 +147,13 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
   "status": "playing",
   "track": {
     "id": "123", "title": "…", "artists": ["…"], "album": "…",
-    "durationMs": 214000, "liked": false, "cover": "https://…",
-    "cached": false
+    "albumId": "456", "durationMs": 214000, "liked": false,
+    "cover": "https://…", "cached": false
   },
   "positionMs": 42000,
   "volume": 0.8,
   "queue": {
-    "items": [{"id":"…","title":"…","artists":["…"],"durationMs":0,"cover":null,"cached":false}],
+    "items": [{"id":"…","title":"…","artists":["…"],"albumId":"456","durationMs":0,"liked":false,"cover":null,"cached":false}],
     "length": 1, "index": 0, "shuffle": false, "repeat": "all"
   },
   "downloads": [
@@ -163,12 +164,15 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
   "ui": {"mode": "full"},
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
   "quality": "lossless",
-  "codec": "flac-mp4"
+  "codec": "flac-mp4",
+  "bitrateKbps": 1411
 }
 ```
 
 `quality`/`codec` — фактическое качество текущего потока, а не только
-значение из конфига. `wave` отсутствует, если волна не запущена. `cover` —
+значение из конфига. `bitrateKbps` — битрейт из ответа API; если API отдаёт
+`0` (битрейт неизвестен), поле равно `null`. `wave` отсутствует, если волна
+не запущена. `cover` —
 всегда полный URL: `coverUri` из API (`%%` заменяется на `400x400`) или
 готовый URL, присланный UI. `cached` показывает, есть ли трек в офлайн-кэше.
 `downloads` — текущая и последние завершённые загрузки (`state`:
@@ -187,6 +191,7 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 | `play_track` | объект трека (`id`, `title`, `artists`, …) |
 | `enqueue` | объект трека |
 | `queue_play`, `queue_remove` | `{"index":0}` |
+| `queue_move` | `{"from":2,"to":0}` — переставить трек |
 | `queue_clear` | — |
 | `queue_set` | `{"tracks":[…],"index":0,"play":true}` — заменить очередь |
 | `download_track` | `{"track":{…}}` — поставить трек в очередь |
@@ -198,12 +203,22 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 | `seek` | `{"positionMs":42000}` |
 | `repeat` | `{"value":"off|all|one"}` |
 | `shuffle` | `{"value":true}` |
+| `playlist_create` | `{"title":"…","visibility":"private"}` |
+| `playlist_delete` | `{"kind":1234}` |
+| `playlist_add_tracks` | `{"kind":1234,"tracks":[…]}` |
+| `playlist_remove_track` | `{"kind":1234,"index":5}` |
+| `like_track` | `{"id":"123","liked":true}` |
 
 `wave_start`/`wave_more`/`wave_feedback` — асинхронные: сначала резолвят
 радио-сессию, затем меняют очередь. `queue_set` с `play: true` тоже
 резолвит поток и запускает трек. `download_track`/`download_tracks` сразу
 отвечают `{ok, rev}`, воркер качает очередь по одному треку: прогресс виден в
 `state.downloads`, длина очереди — в `state.downloadPending`.
+`playlist_add_tracks`/`playlist_remove_track` сами получают актуальный
+`revision` плейлиста; `like_track` обновляет лайк в очереди и текущем треке.
+Очередь, текущий трек, позиция, громкость и качество сохраняются в
+`~/.local/share/ymd/state.json` и восстанавливаются при старте (статус
+`paused`); `play`/`toggle` после рестарта резолвят поток заново.
 
 ## Конфигурация
 

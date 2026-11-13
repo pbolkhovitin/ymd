@@ -52,9 +52,9 @@ bash packaging/build-qt-deb.sh --arch amd64   # внутри запускает�
 | `app/src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling 1 с/3 с, команды, поиск, плейлисты, кэш, 401-retry |
 | `app/src/tray.{h,cpp}` | `KStatusNotifierItem`: показать окно, play/pause, next/prev, выход |
 | `app/src/main.cpp` | `QApplication`, тема KDE, связка QML ↔ клиент ↔ трей |
-| `app/qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, плейлисты, кэш, ошибки |
-| `app/qml/TrackRow.qml` | строка трека для результатов, очереди и плейлистов; кнопка скачивания |
-| `app/qml/format.js` | форматирование времени, качества, размеров кэша и строк треков |
+| `app/qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, плейлисты (создание/поиск/удаление), кэш, ошибки |
+| `app/qml/TrackRow.qml` | строка трека: скачивание, меню `⋮`/правый клик, drag&drop в очереди |
+| `app/qml/format.js` | время, качество, кодек/битрейт, размеры кэша, строки треков |
 
 `YmdClient` читает ключ из `$XDG_RUNTIME_DIR/ymd/session.key`; если файла нет —
 вызывает `ymd session-key`. Каждый запрос идёт с `X-YMD-Session`. При 401 ключ
@@ -67,6 +67,16 @@ bash packaging/build-qt-deb.sh --arch amd64   # внутри запускает�
 `cache_limit`. Прогресс приходит в `state.downloads`, длина очереди — в
 `state.downloadPending`; в диалоге плейлиста кнопка «Скачать все» ставит весь
 список в последовательную очередь.
+
+Управление плейлистами и лайками идёт через команды `playlist_create`,
+`playlist_delete`, `playlist_add_tracks`, `playlist_remove_track`, `like_track`;
+демон сам получает актуальный `revision` перед изменением. В detail плейлиста
+есть поиск по названию/артисту/альбому и счётчик `N / всего`, удаление
+плейлиста и треков, добавление трека в плейлист из контекстного меню.
+Очередь можно переставлять drag&drop; позиция, очередь, громкость и качество
+сохраняются в `~/.local/share/ymd/state.json` и восстанавливаются после
+перезапуска (воспроизведение — по `play`). Статус показывает фактический
+кодек и битрейт: `FLAC · 1411 кбит/с`.
 
 ## Поведение
 
@@ -94,7 +104,8 @@ bash packaging/build-qt-deb.sh --arch amd64   # внутри запускает�
 
 ## Проверки
 
-- `ctest` — 6 тестов `YmdClient` (state, command, search, 401, missing key).
+- `ctest` — 7 кейсов `YmdClient` (state, command, search, 401, missing key,
+  download-all).
 - `bash scripts/docs-check.sh` → `ok`.
 - Ручной smoke: окно, поиск, очередь, seek, трей, закрытие в трей,
   диалоги «Мои плейлисты» (27 плейлистов, detail, «Играть») и «Офлайн-кэш»

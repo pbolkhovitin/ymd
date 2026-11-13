@@ -74,8 +74,8 @@
 | `src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling, команды, поиск, плейлисты, кэш, 401-retry |
 | `src/tray.{h,cpp}` | `KStatusNotifierItem`: окно, play/pause, next/prev, выход |
 | `src/main.cpp` | `QApplication`, тема KDE, связка QML ↔ клиент ↔ трей |
-| `qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, плейлисты, кэш |
-| `qml/TrackRow.qml` | строка трека с кнопкой скачивания |
+| `qml/Main.qml` | окно: обложка, транспорт, поиск, очередь (drag&drop), плейлисты (создание/поиск/удаление), кэш, кодек/битрейт |
+| `qml/TrackRow.qml` | строка трека: скачивание, контекстное меню, drag&drop |
 | `qml/format.js` | общие функции форматирования, включая размеры кэша |
 
 Приложение — тонкий клиент: не хранит токен и не обращается к API Яндекса.
@@ -131,7 +131,7 @@
   "positionMs": 61000,
   "volume": 0.8,
   "queue": {
-    "items": [{"id": "…", "title": "…", "artists": ["…"], "durationMs": 184000, "cover": "…", "cached": false}],
+    "items": [{"id": "…", "title": "…", "artists": ["…"], "albumId": "456", "durationMs": 184000, "liked": false, "cover": "…", "cached": false}],
     "length": 32, "index": 3, "shuffle": false, "repeat": "all"
   },
   "downloads": [
@@ -140,6 +140,7 @@
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
   "quality": "lossless",
   "codec": "flac-mp4",
+  "bitrateKbps": 1411,
   "env": {"fullscreen": false, "overview": false, "idle": false, "onBattery": false},
   "ui": {"mode": "full"}
 }
@@ -152,13 +153,16 @@
 `toggle`, `play`, `pause`, `stop`, `next`, `prev`, `like`, `wave_stop`, `wave`,
 `quality{value}`, `mode{value}`, `play_track{...track}`, `enqueue{...track}`,
 `queue_play{index}`, `queue_set{tracks,index,play}`, `queue_clear`,
-`queue_remove{index}`, `volume{value}`, `seek{positionMs}`, `repeat{value}`,
-`shuffle{value}`, `download_track{track}`, `cache_remove{id}`, `cache_clear`,
-`cache_limit{limitMb}`.
+`queue_remove{index}`, `queue_move{from,to}`, `volume{value}`, `seek{positionMs}`,
+`repeat{value}`, `shuffle{value}`, `download_track{track}`, `cache_remove{id}`,
+`cache_clear`, `cache_limit{limitMb}`, `playlist_create{title,visibility}`,
+`playlist_delete{kind}`, `playlist_add_tracks{kind,tracks}`,
+`playlist_remove_track{kind,index}`, `like_track{id,liked}`.
 
 Асинхронные (резолвят поток через API): `wave_start`, `wave_more`,
 `wave_feedback{kind, trackId?}`, `download_track` (загрузка идёт в фоне,
-прогресс — в `state.downloads`).
+прогресс — в `state.downloads`), операции с плейлистами (сначала получают
+актуальный `revision`).
 
 Ответ: `{ok, rev}`. Плазмоид после успешной команды сразу перечитывает
 `/v1/state`.
