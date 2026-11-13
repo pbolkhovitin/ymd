@@ -239,6 +239,9 @@ fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
 /// Плоский трек для UI. Понимает и полный объект трека, и обёртку
 /// `{ "track": {...} }` из плейлиста.
 fn simplify_track(item: &serde_json::Value) -> Option<serde_json::Value> {
+    let playlist_index = item
+        .get("originalIndex")
+        .and_then(serde_json::Value::as_u64);
     let item = item.get("track").unwrap_or(item);
     let id = item
         .get("id")
@@ -287,16 +290,30 @@ fn simplify_track(item: &serde_json::Value) -> Option<serde_json::Value> {
         .or_else(|| item.pointer("/albums/0/coverUri"))
         .and_then(serde_json::Value::as_str)
         .and_then(crate::state::cover_url);
+    let album_id = item
+        .get("albumId")
+        .or_else(|| item.pointer("/albums/0/id"))
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(str::to_string))
+        });
+    let liked = item
+        .get("liked")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     Some(serde_json::json!({
         "id": id,
         "title": title,
         "artists": artists,
         "album": album,
+        "albumId": album_id,
         "durationMs": duration_ms,
-        "liked": false,
+        "liked": liked,
         "cover": cover,
         "cached": crate::cache::is_cached(&id),
+        "playlistIndex": playlist_index,
     }))
 }
 
@@ -329,6 +346,10 @@ fn simplify_playlist(item: &serde_json::Value, fallback_uid: u64) -> serde_json:
         .get("durationMs")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
+    let revision = item
+        .get("revision")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
     let cover = item
         .pointer("/cover/uri")
         .or_else(|| item.pointer("/cover/itemsUri/0"))
@@ -343,6 +364,7 @@ fn simplify_playlist(item: &serde_json::Value, fallback_uid: u64) -> serde_json:
         "trackCount": track_count,
         "cover": cover,
         "durationMs": duration_ms,
+        "revision": revision,
     })
 }
 
@@ -423,6 +445,7 @@ mod tests {
             "kind": 1036,
             "title": "Мой плейлист",
             "trackCount": 12,
+            "revision": 3,
             "cover": {
                 "type": "mosaic",
                 "itemsUri": ["avatars.yandex.net/get-music-content/1/2/%%"]
@@ -431,6 +454,7 @@ mod tests {
         let playlist = simplify_playlist(&value, 42);
         assert_eq!(playlist["id"], "42:1036");
         assert_eq!(playlist["trackCount"], 12);
+        assert_eq!(playlist["revision"], 3);
         assert_eq!(
             playlist["cover"],
             "https://avatars.yandex.net/get-music-content/1/2/400x400"
@@ -441,19 +465,24 @@ mod tests {
     fn playlist_track_unwraps_wrapper() {
         let value = serde_json::json!({
             "id": 123,
+            "originalIndex": 4,
             "track": {
                 "id": 7,
                 "title": "Трек",
                 "artists": [{ "name": "Артист" }],
-                "albums": [{ "title": "Альбом", "coverUri": "avatars/%%" }],
-                "durationMs": 180000
+                "albums": [{ "id": 55, "title": "Альбом", "coverUri": "avatars/%%" }],
+                "durationMs": 180000,
+                "liked": true
             }
         });
         let track = simplify_track(&value).unwrap();
         assert_eq!(track["id"], "7");
         assert_eq!(track["artists"][0], "Артист");
         assert_eq!(track["album"], "Альбом");
+        assert_eq!(track["albumId"], "55");
         assert_eq!(track["durationMs"], 180000);
         assert_eq!(track["cover"], "https://avatars/400x400");
+        assert_eq!(track["playlistIndex"], 4);
+        assert_eq!(track["liked"], true);
     }
 }

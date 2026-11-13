@@ -34,6 +34,9 @@ pub struct Entry {
     pub codec: String,
     #[serde(default)]
     pub quality: String,
+    /// Битрейт потока в кбит/с (старые записи индекса — без него).
+    #[serde(default)]
+    pub bitrate_kbps: Option<u64>,
     #[serde(default)]
     pub at: u64,
 }
@@ -275,6 +278,7 @@ pub async fn download(
         bytes: written,
         codec: stream.codec.clone(),
         quality: quality.as_str().to_string(),
+        bitrate_kbps: stream.bitrate.map(|value| (value + 500) / 1000),
         at: now,
     };
 

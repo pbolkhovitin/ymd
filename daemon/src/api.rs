@@ -107,6 +107,86 @@ impl Client {
         Ok(response.json().await?)
     }
 
+    /// POST с form-urlencoded телом. Так работают плейлисты и лайки.
+    async fn post_form(&self, path: &str, form: &[(&str, String)]) -> Result<Value, ApiError> {
+        let response = self
+            .http
+            .post(format!("{BASE_URL}{path}"))
+            .header("authorization", format!("OAuth {}", self.token))
+            .header("x-yandex-music-client", CLIENT_HEADER)
+            .header("accept-language", "ru")
+            .form(form)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: body.chars().take(200).collect(),
+            });
+        }
+        Ok(serde_json::from_str(&body).unwrap_or(Value::Null))
+    }
+
+    /// Создание плейлиста. `visibility`: `public` или `private`.
+    pub async fn create_playlist(
+        &self,
+        uid: u64,
+        title: &str,
+        visibility: &str,
+    ) -> Result<Value, ApiError> {
+        let value = self
+            .post_form(
+                &format!("/users/{uid}/playlists/create"),
+                &[
+                    ("title", title.to_string()),
+                    ("visibility", visibility.to_string()),
+                ],
+            )
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Удаление плейлиста.
+    pub async fn delete_playlist(&self, uid: u64, kind: u64) -> Result<Value, ApiError> {
+        self.post_form(&format!("/users/{uid}/playlists/{kind}/delete"), &[])
+            .await
+    }
+
+    /// Изменение плейлиста через diff-операции.
+    pub async fn change_playlist(
+        &self,
+        uid: u64,
+        kind: u64,
+        revision: u64,
+        diff: &str,
+    ) -> Result<Value, ApiError> {
+        let value = self
+            .post_form(
+                &format!("/users/{uid}/playlists/{kind}/change"),
+                &[
+                    ("kind", kind.to_string()),
+                    ("revision", revision.to_string()),
+                    ("diff", diff.to_string()),
+                ],
+            )
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Поставить или снять лайк трека.
+    pub async fn like_track(&self, uid: u64, track_id: &str, liked: bool) -> Result<(), ApiError> {
+        let action = if liked { "add-multiple" } else { "remove" };
+        self.post_form(
+            &format!("/users/{uid}/likes/tracks/{action}"),
+            &[("track-ids", track_id.to_string())],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Новая сессия «Моей волны».
     pub async fn wave_start(&self) -> Result<WaveBatch, ApiError> {
         let value = self.post_json("/rotor/session/new", &json!({})).await?;
@@ -318,7 +398,10 @@ impl Client {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
-            bitrate: info.get("bitrate").and_then(Value::as_u64),
+            bitrate: info
+                .get("bitrate")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0),
         })
     }
 

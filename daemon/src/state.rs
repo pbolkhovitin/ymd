@@ -24,6 +24,9 @@ pub struct Track {
     pub artists: Vec<String>,
     #[serde(default)]
     pub album: Option<String>,
+    /// id альбома — нужен для добавления трека в плейлист и лайков.
+    #[serde(default)]
+    pub album_id: Option<String>,
     #[serde(default)]
     pub duration_ms: u64,
     #[serde(default)]
@@ -48,7 +51,11 @@ pub struct QueueItem {
     #[serde(default)]
     pub artists: Vec<String>,
     #[serde(default)]
+    pub album_id: Option<String>,
+    #[serde(default)]
     pub duration_ms: u64,
+    #[serde(default)]
+    pub liked: bool,
     #[serde(default)]
     pub cover: Option<String>,
     #[serde(default)]
@@ -61,7 +68,9 @@ impl From<&Track> for QueueItem {
             id: track.id.clone(),
             title: track.title.clone(),
             artists: track.artists.clone(),
+            album_id: track.album_id.clone(),
             duration_ms: track.duration_ms,
+            liked: track.liked,
             cover: track.cover.clone(),
             cached: track.cached,
         }
@@ -95,6 +104,29 @@ impl Queue {
     fn sync_length(&mut self) {
         self.length = self.items.len();
     }
+}
+
+/// Переставляет элемент очереди и сохраняет текущий трек выбранным.
+fn move_queue_item(state: &mut State, from: usize, to: usize) -> Result<(), String> {
+    let len = state.queue.items.len();
+    if from >= len || to >= len {
+        return Err(format!("queue_move: нет индекса {from}->{to} (в очереди {len})"));
+    }
+    if from == to {
+        return Ok(());
+    }
+    let item = state.queue.items.remove(from);
+    state.queue.items.insert(to, item);
+    let index = state.queue.index;
+    if index == from {
+        state.queue.index = to;
+    } else if from < index && to >= index {
+        state.queue.index = index - 1;
+    } else if from > index && to <= index {
+        state.queue.index = index + 1;
+    }
+    state.queue.sync_length();
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -163,6 +195,9 @@ pub struct State {
     /// Кодек текущего потока (`flac-mp4`, `aac256-mp4`, …).
     #[serde(default)]
     pub codec: Option<String>,
+    /// Битрейт текущего потока в кбит/с.
+    #[serde(default)]
+    pub bitrate_kbps: Option<u64>,
     /// Активные и завершённые скачивания (для индикатора прогресса).
     #[serde(default)]
     pub downloads: Vec<Download>,
@@ -189,17 +224,63 @@ impl Default for State {
             wave: None,
             quality: default_quality_label(),
             codec: None,
+            bitrate_kbps: None,
             downloads: Vec::new(),
             download_pending: 0,
         }
     }
 }
 
-/// Результат резолва потока: URL плюс фактические качество и кодек.
+/// Часть состояния, которая переживает перезапуск демона.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Persisted {
+    #[serde(default)]
+    pub queue: Queue,
+    #[serde(default)]
+    pub track: Option<Track>,
+    #[serde(default)]
+    pub position_ms: u64,
+    #[serde(default)]
+    pub volume: f64,
+    #[serde(default)]
+    pub quality: String,
+}
+
+fn state_path() -> std::path::PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("ymd").join("state.json")
+}
+
+fn load_persisted() -> Option<Persisted> {
+    let data = std::fs::read(state_path()).ok()?;
+    serde_json::from_slice(&data).ok()
+}
+
+fn save_persisted(state: &State) -> Result<(), String> {
+    let persisted = Persisted {
+        queue: state.queue.clone(),
+        track: state.track.clone(),
+        position_ms: state.position_ms,
+        volume: state.volume,
+        quality: state.quality.clone(),
+    };
+    let path = state_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| format!("создать {}: {err}", parent.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let data = serde_json::to_vec_pretty(&persisted).map_err(|err| err.to_string())?;
+    std::fs::write(&tmp, data).map_err(|err| format!("записать {}: {err}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|err| format!("переименовать {}: {err}", path.display()))
+}
+
+/// Результат резолва потока: URL плюс фактические качество, кодек и битрейт.
 struct ResolvedStream {
     url: String,
     quality: String,
     codec: String,
+    bitrate: Option<u64>,
 }
 
 /// Общий стейт демона. Дешёвый клон: внутри `Arc`.
@@ -248,6 +329,47 @@ impl AppState {
         let mut app = Self::new();
         app.player = Some(Arc::new(player));
         app
+    }
+
+    /// Восстанавливает очередь и позицию после перезапуска демона.
+    pub fn restore_state(&self) {
+        let Some(saved) = load_persisted() else {
+            return;
+        };
+        let Ok(mut st) = self.inner.write() else {
+            return;
+        };
+        st.queue = saved.queue;
+        st.queue.sync_length();
+        if saved.volume > 0.0 {
+            st.volume = saved.volume.clamp(0.0, 1.0);
+        }
+        if !saved.quality.is_empty() {
+            st.quality = saved.quality;
+        }
+        st.track = saved.track.or_else(|| {
+            st.queue
+                .items
+                .get(st.queue.index)
+                .map(track_from_queue_item)
+        });
+        st.position_ms = saved.position_ms;
+        st.status = "paused".to_string();
+        if let Some(player) = &self.player {
+            player.set_volume(st.volume);
+        }
+        if st.queue.items.is_empty() && st.track.is_none() {
+            return;
+        }
+        st.rev += 1;
+        tracing::info!(tracks = st.queue.items.len(), position = st.position_ms, "state restored");
+    }
+
+    /// Сохраняет очередь и позицию на диск (best effort).
+    pub fn save_state(&self) {
+        if let Err(err) = save_persisted(&self.snapshot()) {
+            tracing::warn!("save state: {err}");
+        }
     }
 
     pub fn is_local(&self) -> bool {
@@ -499,6 +621,19 @@ impl AppState {
                         .ok_or_else(|| "shuffle: нужно value".to_string())?;
                     st.queue.shuffle = value;
                 }
+                "queue_move" => {
+                    let from = payload
+                        .and_then(|v| v.get("from"))
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| "queue_move: нужен from".to_string())?
+                        as usize;
+                    let to = payload
+                        .and_then(|v| v.get("to"))
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| "queue_move: нужен to".to_string())?
+                        as usize;
+                    move_queue_item(&mut st, from, to)?;
+                }
                 "queue_remove" => {
                     let index = payload
                         .and_then(|v| v.get("index"))
@@ -523,7 +658,10 @@ impl AppState {
             // Появился URL потока — отдаём его локальному плееру.
             // Если очередь закончилась (repeat=off), не запускаем звук заново.
             if st.status != "stopped"
-                && matches!(op, "play_track" | "queue_play" | "queue_set" | "next" | "prev")
+                && matches!(
+                    op,
+                    "play_track" | "queue_play" | "queue_set" | "next" | "prev" | "play" | "toggle"
+                )
             {
                 if let Some(url) = payload.and_then(|v| v.get("url")).and_then(Value::as_str) {
                     if let Some(player) = &self.player {
@@ -562,6 +700,23 @@ impl AppState {
         };
 
         self.publish(&snapshot);
+        if matches!(
+            op,
+            "play_track"
+                | "queue_play"
+                | "queue_set"
+                | "queue_move"
+                | "queue_remove"
+                | "queue_clear"
+                | "volume"
+                | "repeat"
+                | "shuffle"
+                | "next"
+                | "prev"
+                | "stop"
+        ) {
+            self.save_state();
+        }
         Ok(snapshot.rev)
     }
 
@@ -574,7 +729,39 @@ impl AppState {
             "wave_feedback" => return self.wave_feedback(payload).await,
             "download_track" => return self.download_track(payload).await,
             "download_tracks" => return self.download_tracks(payload).await,
+            "playlist_create" => return self.playlist_create(payload).await,
+            "playlist_delete" => return self.playlist_delete(payload).await,
+            "playlist_add_tracks" => return self.playlist_add_tracks(payload).await,
+            "playlist_remove_track" => return self.playlist_remove_track(payload).await,
+            "like_track" => return self.like_track(payload).await,
             _ => {}
+        }
+
+        // После рестарта демон восстанавливает очередь в paused без потока.
+        // Первый play/toggle должен снова загрузить URL текущего трека.
+        if matches!(op, "play" | "toggle")
+            && self.player.is_some()
+            && !self.is_local()
+            && !self.is_external()
+        {
+            if let Some(track) = self.snapshot().track {
+                if self.snapshot().status != "playing" {
+                    if let Ok(resolved) = self.resolve_url(&track.id).await {
+                        let mut owned = payload
+                            .cloned()
+                            .unwrap_or_else(|| Value::Object(Default::default()));
+                        if let Some(object) = owned.as_object_mut() {
+                            object.insert("url".to_string(), Value::String(resolved.url));
+                        }
+                        if let Ok(mut st) = self.inner.write() {
+                            st.quality = resolved.quality;
+                            st.codec = Some(resolved.codec);
+                            st.bitrate_kbps = resolved.bitrate;
+                        }
+                        return self.command(op, Some(&owned));
+                    }
+                }
+            }
         }
 
         let play_requested = payload
@@ -647,10 +834,12 @@ impl AppState {
         if let Some(resolved) = &resolved {
             if let Ok(mut st) = self.inner.write() {
                 let changed = st.quality != resolved.quality
-                    || st.codec.as_deref() != Some(resolved.codec.as_str());
+                    || st.codec.as_deref() != Some(resolved.codec.as_str())
+                    || st.bitrate_kbps != resolved.bitrate;
                 if changed {
                     st.quality = resolved.quality.clone();
                     st.codec = Some(resolved.codec.clone());
+                    st.bitrate_kbps = resolved.bitrate;
                     st.rev += 1;
                 }
             }
@@ -665,6 +854,175 @@ impl AppState {
         }
 
         self.command(op, Some(&owned))
+    }
+
+    /// Создаёт плейлист и возвращает его `kind`.
+    async fn playlist_create(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let title = payload
+            .and_then(|v| v.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .ok_or_else(|| "playlist_create: нужно title".to_string())?;
+        let visibility = payload
+            .and_then(|v| v.get("visibility"))
+            .and_then(Value::as_str)
+            .unwrap_or("private");
+        let account = crate::auth::load_account().ok_or_else(|| "нет аккаунта".to_string())?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let value = client
+            .create_playlist(account.uid, title, visibility)
+            .await
+            .map_err(|err| err.to_string())?;
+        let kind = value
+            .get("kind")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "playlist_create: API не вернул kind".to_string())?;
+        self.bump();
+        Ok(kind)
+    }
+
+    async fn playlist_delete(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let kind = payload
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "playlist_delete: нужен kind".to_string())?;
+        let account = crate::auth::load_account().ok_or_else(|| "нет аккаунта".to_string())?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        client
+            .delete_playlist(account.uid, kind)
+            .await
+            .map_err(|err| err.to_string())?;
+        self.bump();
+        Ok(self.snapshot().rev)
+    }
+
+    /// Добавляет треки в конец плейлиста.
+    async fn playlist_add_tracks(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let kind = payload
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "playlist_add_tracks: нужен kind".to_string())?;
+        let items = payload
+            .and_then(|v| v.get("tracks"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "playlist_add_tracks: нужны tracks".to_string())?;
+        let account = crate::auth::load_account().ok_or_else(|| "нет аккаунта".to_string())?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let playlist = client
+            .playlist(account.uid, kind)
+            .await
+            .map_err(|err| err.to_string())?;
+        let revision = playlist
+            .get("revision")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let at = playlist
+            .get("tracks")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        let tracks: Vec<Value> = items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id").and_then(value_to_id)?;
+                let album = item
+                    .get("albumId")
+                    .or_else(|| item.get("album_id"))
+                    .and_then(value_to_id);
+                let mut track = serde_json::json!({ "id": json_id(&id) });
+                if let Some(album) = album {
+                    track["albumId"] = json_id(&album);
+                }
+                Some(track)
+            })
+            .collect();
+        if tracks.is_empty() {
+            return Err("playlist_add_tracks: нет треков".to_string());
+        }
+        let diff = serde_json::json!([{ "op": "insert", "at": at, "tracks": tracks }]);
+        client
+            .change_playlist(account.uid, kind, revision, &diff.to_string())
+            .await
+            .map_err(|err| err.to_string())?;
+        self.bump();
+        Ok(self.snapshot().rev)
+    }
+
+    /// Удаляет один трек по индексу в плейлисте.
+    async fn playlist_remove_track(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let kind = payload
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "playlist_remove_track: нужен kind".to_string())?;
+        let index = payload
+            .and_then(|v| v.get("index"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "playlist_remove_track: нужен index".to_string())?;
+        let account = crate::auth::load_account().ok_or_else(|| "нет аккаунта".to_string())?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        let playlist = client
+            .playlist(account.uid, kind)
+            .await
+            .map_err(|err| err.to_string())?;
+        let revision = playlist
+            .get("revision")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        // В diff Яндекса `to` — исключающая граница: удаление одного
+        // элемента с индексом i задаётся как {from:i, to:i+1}.
+        let end = index.saturating_add(1);
+        let diff = serde_json::json!([{ "op": "delete", "from": index, "to": end }]);
+        client
+            .change_playlist(account.uid, kind, revision, &diff.to_string())
+            .await
+            .map_err(|err| err.to_string())?;
+        self.bump();
+        Ok(self.snapshot().rev)
+    }
+
+    async fn like_track(&self, payload: Option<&Value>) -> Result<u64, String> {
+        let id = payload
+            .and_then(|v| v.get("id"))
+            .and_then(value_to_id)
+            .ok_or_else(|| "like_track: нужен id".to_string())?;
+        let liked = payload
+            .and_then(|v| v.get("liked"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let account = crate::auth::load_account().ok_or_else(|| "нет аккаунта".to_string())?;
+        let client = crate::api::Client::from_store().map_err(|err| err.to_string())?;
+        client
+            .like_track(account.uid, &id, liked)
+            .await
+            .map_err(|err| err.to_string())?;
+        if let Ok(mut st) = self.inner.write() {
+            for item in &mut st.queue.items {
+                if item.id == id {
+                    item.liked = liked;
+                }
+            }
+            if let Some(track) = st.track.as_mut() {
+                if track.id == id {
+                    track.liked = liked;
+                }
+            }
+            st.rev += 1;
+        }
+        self.save_state();
+        let snapshot = self.snapshot();
+        self.publish(&snapshot);
+        Ok(snapshot.rev)
+    }
+
+    /// Увеличивает ревизию состояния и рассылает его подписчикам.
+    fn bump(&self) {
+        if let Ok(mut st) = self.inner.write() {
+            st.rev += 1;
+            let snapshot = st.clone();
+            drop(st);
+            self.publish(&snapshot);
+        }
     }
 
     /// Ставит один трек в очередь на скачивание.
@@ -840,13 +1198,14 @@ impl AppState {
         // Офлайн-кэш приоритетнее сети: локальный файл играет без токена и сети.
         if let Some(path) = crate::cache::path_for(track_id) {
             tracing::debug!(track = %track_id, file = %path.display(), "play from cache");
-            let (quality, codec) = crate::cache::entry_for(track_id)
-                .map(|entry| (entry.quality, entry.codec))
-                .unwrap_or_else(|| ("cache".to_string(), String::new()));
+            let (quality, codec, bitrate) = crate::cache::entry_for(track_id)
+                .map(|entry| (entry.quality, entry.codec, entry.bitrate_kbps))
+                .unwrap_or_else(|| ("cache".to_string(), String::new(), None));
             return Ok(ResolvedStream {
                 url: format!("file://{}", path.display()),
                 quality,
                 codec,
+                bitrate,
             });
         }
 
@@ -872,6 +1231,12 @@ impl AppState {
             url: stream.url,
             quality: used.as_str().to_string(),
             codec: stream.codec,
+            // API отдаёт битрейт в бит/с, в состоянии и UI — кбит/с.
+            // Ноль означает «неизвестно», а не 0 kbps.
+            bitrate: stream
+                .bitrate
+                .map(|value| (value + 500) / 1000)
+                .filter(|value| *value > 0),
         })
     }
 
@@ -1089,6 +1454,7 @@ impl AppState {
                 title: snapshot.title,
                 artists: snapshot.artists,
                 album: snapshot.album,
+                album_id: None,
                 duration_ms: snapshot.duration_ms,
                 liked: false,
                 cover: None,
@@ -1116,8 +1482,13 @@ impl AppState {
         let app = self.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(1));
+            let mut tick = 0u64;
             loop {
                 ticker.tick().await;
+                tick = tick.wrapping_add(1);
+                if tick % 5 == 0 {
+                    app.save_state();
+                }
 
                 // Локальный плеер главнее: он и звук, и позиция.
                 // После первого запуска внешний MPRIS не подхватывает эстафету.
@@ -1225,6 +1596,13 @@ fn value_to_id(value: &Value) -> Option<String> {
         .or_else(|| value.as_u64().map(|number| number.to_string()))
 }
 
+/// Yandex API ждёт числовые id; строковые оставляем как есть.
+fn json_id(id: &str) -> Value {
+    id.parse::<u64>()
+        .map(|number| Value::Number(number.into()))
+        .unwrap_or_else(|_| Value::String(id.to_string()))
+}
+
 /// Шаг по очереди: +1 — следующий, -1 — предыдущий.
 fn advance(state: &mut State, delta: isize) {
     let len = state.queue.items.len();
@@ -1280,8 +1658,9 @@ fn track_from_queue_item(item: &QueueItem) -> Track {
         title: item.title.clone(),
         artists: item.artists.clone(),
         album: None,
+        album_id: item.album_id.clone(),
         duration_ms: item.duration_ms,
-        liked: false,
+        liked: item.liked,
         cover: item.cover.clone(),
         cached: item.cached,
     }
@@ -1353,6 +1732,11 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
                 v.get("title").and_then(Value::as_str).map(str::to_string)
             })
         });
+    let album_id = field("albumId")
+        .or_else(|| field("album_id"))
+        .or_else(|| value.pointer("/albums/0/id"))
+        .and_then(value_to_id);
+    let liked = field("liked").and_then(Value::as_bool).unwrap_or(false);
     let cover = field("cover")
         .and_then(Value::as_str)
         .and_then(cover_url)
@@ -1374,8 +1758,9 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         title,
         artists,
         album,
+        album_id,
         duration_ms,
-        liked: false,
+        liked,
         cover,
         cached,
     })
@@ -1444,6 +1829,7 @@ mod tests {
             title: "T".into(),
             artists: vec!["A".into()],
             album: None,
+            album_id: None,
             duration_ms: 1000,
             liked: false,
             cover: None,
@@ -1539,6 +1925,40 @@ mod tests {
         assert_eq!(state.queue.items.len(), 1);
         assert_eq!(state.queue.index, 0);
         assert_eq!(state.queue.length, 1);
+    }
+
+    #[test]
+    fn queue_move_keeps_current_track_selected() {
+        let app = AppState::new();
+        app.command("queue_set", Some(&serde_json::json!({
+            "tracks": [
+                { "id": "1", "title": "One" },
+                { "id": "2", "title": "Two" },
+                { "id": "3", "title": "Three" }
+            ],
+            "index": 1
+        })))
+        .unwrap();
+
+        app.command("queue_move", Some(&serde_json::json!({ "from": 1, "to": 2 })))
+            .unwrap();
+        let state = app.snapshot();
+        assert_eq!(state.queue.items[2].id, "2");
+        assert_eq!(state.queue.index, 2);
+        assert_eq!(state.queue.length, 3);
+    }
+
+    #[test]
+    fn track_reads_album_and_liked() {
+        let value = serde_json::json!({
+            "id": "7",
+            "title": "T",
+            "albumId": 42,
+            "liked": true
+        });
+        let track = track_from_value(&value).unwrap();
+        assert_eq!(track.album_id.as_deref(), Some("42"));
+        assert!(track.liked);
     }
 
     #[test]

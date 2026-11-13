@@ -170,6 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     AppState::new()
                 }
             };
+            app.restore_state();
             app.spawn_ticker();
             let mpris_app = app.clone();
             tokio::spawn(async move {
