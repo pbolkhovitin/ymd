@@ -72,6 +72,13 @@ function streamLabel(quality, codec, bitrateKbps) {
     var kbps = Number(bitrateKbps || 0);
     if (kbps > 0) {
         label += " · " + Math.round(kbps) + " kbps";
+    } else {
+        // API не всегда отдаёт битрейт; для lossy-профилей показываем
+        // номинальный битрейт с явным «~».
+        var nominal = quality === "hq" ? 256 : (quality === "nq" ? 192 : (quality === "lq" ? 64 : 0));
+        if (nominal > 0) {
+            label += " · ~" + nominal + " kbps";
+        }
     }
     return label;
 }
