@@ -61,9 +61,39 @@
 
 ## Отдельное приложение Qt
 
-Пользователь попросил после KDE-порта сделать standalone-приложение на Qt.
-Предварительно: Kirigami/Qt Quick, тот же демон `ymd` по HTTP, ключ через
-`ymd session-key`. Нужна отдельная спека и план; в текущий порт не входит.
+Сделано после KDE-порта: `ymd-qt` — тонкий клиент к тому же демону по HTTP.
+Спека `docs/superpowers/specs/2026-11-13-ymd-qt-app-design.md`, план
+`docs/superpowers/plans/2026-11-13-ymd-qt-app.md`, документация
+`docs/11-qt-app.md`.
+
+- C++ `YmdClient` (ключ, HTTP, polling, поиск, 401-retry), QML/Kirigami окно,
+  `KStatusNotifierItem` с меню.
+- Пакеты `dist/ymd-qt_0.2.0_amd64.deb` и `..._arm64.deb`; на remote
+  установлены, окно и трей проверены.
+- Иконки транспорта/закрытия сделаны текстовыми глифами: на remote
+  Breeze-иконки не находились и `ToolButton` схлопывались.
+- Меню трея на Wayland — best-effort: DBus `ContextMenu` без input serial
+  не открывает popup; клик по иконке (toggle) и средняя кнопка (play/pause)
+  работают. Это ограничение зафиксировано в `docs/11-qt-app.md`.
+
+## Обложки и громкость (2026-11-13)
+
+- Очередь/«Моя волна» не показывали обложки: API отдаёт `coverUri`, а
+  `track_from_payload` читал только `cover`. Поиск уже нормализовал `coverUri`,
+  поэтому там обложки были. Исправлено: `state::cover_url()` (`%%` →
+  `400x400`, добавление `https://`, fallback на `/albums/0/coverUri`),
+  используется и в `httpd::simplify_tracks`. 30 тестов, 3 новых.
+- Громкость в демоне была готова; добавлены слайдеры в `app/qml/Main.qml` и
+  `FullRepresentation.qml` (команда `volume` на отпускании, Binding обратно).
+- Обложку в **компакте** панели сделать не удалось: applet 28×28,
+  `formfactor=2`; QML Image получал `status=Ready`, но текстура не
+  создавалась (`No QSGTexture provided from updateSampledImage()`), в панели
+  оставалась нота. Попытка временно сломала `CompactRepresentation.qml`
+  синтаксической ошибкой — верхняя панель исчезла до reboot. Компакт
+  возвращён к статичной иконке; обложка остаётся в попапе и окне `ymd-qt`.
+- Проверено на планшете: окно `ymd-qt` — обложка и слайдер 80 %; попап —
+  обложка и слайдер; `volume 0.35` → state 0.35; после wave — cover URL
+  `https://avatars.yandex.net/.../400x400`.
 
 ## Финальная проверка (2026-11-13)
 

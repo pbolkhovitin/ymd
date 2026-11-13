@@ -964,6 +964,21 @@ pub fn track_from_value(value: &Value) -> Result<Track, String> {
     track_from_payload(Some(value))
 }
 
+/// Приводит обложку к полному URL. API отдаёт `coverUri` без схемы и с
+/// подстановкой `%%` под нужный размер; UI может прислать готовый URL.
+pub(crate) fn cover_url(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let url = if raw.starts_with("https://") || raw.starts_with("http://") {
+        raw.to_string()
+    } else {
+        format!("https://{}", raw.trim_start_matches("//"))
+    };
+    Some(url.replace("%%", "400x400"))
+}
+
 fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
     let value = payload.ok_or_else(|| "нужен payload с треком".to_string())?;
     let field = |name: &str| -> Option<&Value> {
@@ -1011,7 +1026,18 @@ fn track_from_payload(payload: Option<&Value>) -> Result<Track, String> {
         });
     let cover = field("cover")
         .and_then(Value::as_str)
-        .map(str::to_string);
+        .and_then(cover_url)
+        .or_else(|| {
+            field("coverUri")
+                .and_then(Value::as_str)
+                .and_then(cover_url)
+        })
+        .or_else(|| {
+            value
+                .pointer("/albums/0/coverUri")
+                .and_then(Value::as_str)
+                .and_then(cover_url)
+        });
 
     Ok(Track {
         id,
@@ -1035,6 +1061,48 @@ mod tests {
             "artists": ["MACAN"],
             "durationMs": 184000
         })
+    }
+
+    #[test]
+    fn track_cover_uri_is_normalized() {
+        let value = serde_json::json!({
+            "id": "1",
+            "title": "T",
+            "coverUri": "avatars.yandex.net/get-music-content/1/2/%%"
+        });
+        let track = track_from_value(&value).unwrap();
+        assert_eq!(
+            track.cover.as_deref(),
+            Some("https://avatars.yandex.net/get-music-content/1/2/400x400")
+        );
+    }
+
+    #[test]
+    fn track_cover_falls_back_to_album_uri() {
+        let value = serde_json::json!({
+            "id": "1",
+            "title": "T",
+            "albums": [{ "coverUri": "//avatars.yandex.net/album/%%" }]
+        });
+        let track = track_from_value(&value).unwrap();
+        assert_eq!(
+            track.cover.as_deref(),
+            Some("https://avatars.yandex.net/album/400x400")
+        );
+    }
+
+    #[test]
+    fn track_cover_keeps_ready_url() {
+        let value = serde_json::json!({
+            "id": "1",
+            "title": "T",
+            "cover": "https://avatars.yandex.net/ready/400x400"
+        });
+        let track = track_from_value(&value).unwrap();
+        assert_eq!(
+            track.cover.as_deref(),
+            Some("https://avatars.yandex.net/ready/400x400")
+        );
     }
 
     #[test]

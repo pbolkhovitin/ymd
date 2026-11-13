@@ -181,7 +181,7 @@ fn simplify_tracks(value: &serde_json::Value) -> Vec<serde_json::Value> {
                 .get("coverUri")
                 .or_else(|| item.pointer("/albums/0/coverUri"))
                 .and_then(serde_json::Value::as_str)
-                .map(|uri| format!("https://{}", uri.replace("%%", "400x400")));
+                .and_then(crate::state::cover_url);
 
             Some(serde_json::json!({
                 "id": id,
