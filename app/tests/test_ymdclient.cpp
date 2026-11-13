@@ -1,6 +1,7 @@
 #include "ymdclient.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSharedPointer>
@@ -124,6 +125,7 @@ class TestYmdClient : public QObject
 private slots:
     void parsesState();
     void sendsCommandPayload();
+    void sendsDownloadAllPayload();
     void parsesSearchResults();
     void retriesOnceOn401();
     void reportsAuthFailureAfterSecond401();
@@ -171,6 +173,38 @@ void TestYmdClient::sendsCommandPayload()
     QCOMPARE(document.object().value(QStringLiteral("payload")).toObject()
                  .value(QStringLiteral("positionMs")).toInt(),
              1234);
+}
+
+void TestYmdClient::sendsDownloadAllPayload()
+{
+    FakeServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    server.enqueue(200, kState);
+    server.enqueue(200, R"({"ok":true,"rev":2})");
+    server.enqueue(200, kState);
+
+    QTemporaryDir dir;
+    YmdClient client(baseUrl(server), writeKey(dir), QString());
+    QTRY_COMPARE(server.requestCount, 1);
+
+    const QVariantList tracks{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("1")},
+                    {QStringLiteral("title"), QStringLiteral("One")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("2")},
+                    {QStringLiteral("title"), QStringLiteral("Two")}},
+    };
+    client.downloadAll(tracks);
+    QTRY_VERIFY(server.requestCount >= 2);
+
+    const QJsonDocument document = QJsonDocument::fromJson(server.requestBodies.value(1));
+    QVERIFY(document.isObject());
+    QCOMPARE(document.object().value(QStringLiteral("op")).toString(),
+             QStringLiteral("download_tracks"));
+    const QJsonArray sent = document.object().value(QStringLiteral("payload")).toObject()
+                                .value(QStringLiteral("tracks")).toArray();
+    QCOMPARE(sent.size(), 2);
+    QCOMPARE(sent.at(1).toObject().value(QStringLiteral("id")).toString(),
+             QStringLiteral("2"));
 }
 
 void TestYmdClient::parsesSearchResults()

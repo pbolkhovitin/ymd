@@ -325,6 +325,13 @@ void YmdClient::download(const QVariantMap &item)
     sendCmd(QStringLiteral("download_track"), payload, {});
 }
 
+void YmdClient::downloadAll(const QVariantList &tracks)
+{
+    QVariantMap payload;
+    payload.insert(QStringLiteral("tracks"), tracks);
+    sendCmd(QStringLiteral("download_tracks"), payload, {});
+}
+
 void YmdClient::removeCached(const QString &id)
 {
     sendCmd(QStringLiteral("cache_remove"),

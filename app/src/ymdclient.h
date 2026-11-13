@@ -62,6 +62,7 @@ public:
     Q_INVOKABLE void loadPlaylist(qint64 uid, qint64 kind);
     Q_INVOKABLE void loadCache();
     Q_INVOKABLE void download(const QVariantMap &item);
+    Q_INVOKABLE void downloadAll(const QVariantList &tracks);
     Q_INVOKABLE void removeCached(const QString &id);
     Q_INVOKABLE void clearCache();
     Q_INVOKABLE void setCacheLimit(qint64 limitMb);

@@ -35,6 +35,7 @@ Kirigami.ApplicationWindow {
     property string statusLine: (playing ? "Играет" : (status === "paused" ? "Пауза" : "Остановлено"))
         + " · " + Format.qualityLabel(quality)
     property var downloads: st.downloads || []
+    property int downloadPending: st.downloadPending || 0
 
     function send(op) {
         client.cmd(op, {});
@@ -370,6 +371,13 @@ Kirigami.ApplicationWindow {
                 }
             }
 
+            Controls.Label {
+                Layout.alignment: Qt.AlignHCenter
+                visible: root.downloadPending > 0
+                text: "В очереди на скачивание: " + root.downloadPending
+                color: Kirigami.Theme.disabledTextColor
+            }
+
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: errorRow.implicitHeight + Kirigami.Units.smallSpacing * 2
@@ -517,6 +525,14 @@ Kirigami.ApplicationWindow {
                 }
 
                 Controls.Button {
+                    text: "Скачать все"
+                    enabled: client.playlistTracks.length > 0
+                    onClicked: client.downloadAll(client.playlistTracks)
+                    Controls.ToolTip.text: "Поставить весь плейлист в очередь на скачивание"
+                    Controls.ToolTip.visible: hovered
+                }
+
+                Controls.Button {
                     text: "Играть"
                     enabled: client.playlistTracks.length > 0
                     onClicked: {
@@ -528,6 +544,13 @@ Kirigami.ApplicationWindow {
                         playlistsDialog.close();
                     }
                 }
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                visible: playlistsDialog.showingTracks && root.downloadPending > 0
+                text: "В очереди на скачивание: " + root.downloadPending
+                color: Kirigami.Theme.disabledTextColor
             }
 
             Controls.Label {
