@@ -63,8 +63,10 @@ bash packaging/build-qt-deb.sh --arch amd64   # внутри запускает�
 
 Плейлисты и кэш клиент получает через `GET /v1/playlists`, `GET /v1/playlist`
 и `GET /v1/cache`; скачивание, удаление и лимит кэша — через команды демона
-`download_track`, `cache_remove`, `cache_clear`, `cache_limit`. Прогресс
-скачивания приходит в `state.downloads` и обновляется вместе с состоянием.
+`download_track`, `download_tracks`, `cache_remove`, `cache_clear`,
+`cache_limit`. Прогресс приходит в `state.downloads`, длина очереди — в
+`state.downloadPending`; в диалоге плейлиста кнопка «Скачать все» ставит весь
+список в последовательную очередь.
 
 ## Поведение
 

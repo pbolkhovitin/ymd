@@ -98,9 +98,11 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 проверяет кэш и отдаёт `file://…`, поэтому скачанный трек играет без сети.
 
 Скачивание доступно из CLI (`ymd download`, `ymd download-album`), из окна
-`ymd-qt` (кнопка `⤓`) и командой `download_track`. HTTP-запрос не блокируется:
-прогресс публикуется в `state.downloads`, а по завершении обновляется флаг
-`cached` у трека и очереди. Лимит `[cache] limit_mb` (по умолчанию 2048)
+`ymd-qt` (кнопка `⤓`) и командами `download_track`/`download_tracks`.
+Загрузки идут строго последовательно: команда только добавляет треки в
+очередь и сразу отвечает, воркер качает по одному. Прогресс публикуется в
+`state.downloads`, число ожидающих — в `state.downloadPending`, по завершении
+обновляется флаг `cached` у трека и очереди. Лимит `[cache] limit_mb` (по умолчанию 2048)
 проверяется после каждой загрузки, старые записи вытесняются по `at`;
 изменить лимит можно командой `cache_limit`. Докачка после обрыва пока
 начинается с нуля.
@@ -156,6 +158,7 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
   "downloads": [
     {"id":"…","title":"…","state":"downloading","bytes":1048576,"total":3993120,"error":null}
   ],
+  "downloadPending": 12,
   "env": {"fullscreen": false, "overview": false, "idle": false, "onBattery": false},
   "ui": {"mode": "full"},
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
@@ -168,8 +171,9 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 значение из конфига. `wave` отсутствует, если волна не запущена. `cover` —
 всегда полный URL: `coverUri` из API (`%%` заменяется на `400x400`) или
 готовый URL, присланный UI. `cached` показывает, есть ли трек в офлайн-кэше.
-`downloads` — активные и последние завершённые загрузки (`state`:
-`downloading|done|error`).
+`downloads` — текущая и последние завершённые загрузки (`state`:
+`downloading|done|error`); очередь целиком не сериализуется, её длина —
+`downloadPending`.
 
 ### Команды
 
@@ -185,7 +189,8 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 | `queue_play`, `queue_remove` | `{"index":0}` |
 | `queue_clear` | — |
 | `queue_set` | `{"tracks":[…],"index":0,"play":true}` — заменить очередь |
-| `download_track` | `{"track":{…}}` — асинхронно скачать в кэш |
+| `download_track` | `{"track":{…}}` — поставить трек в очередь |
+| `download_tracks` | `{"tracks":[…]}` — поставить плейлист в очередь |
 | `cache_remove` | `{"id":"123"}` |
 | `cache_clear` | — |
 | `cache_limit` | `{"limitMb":2048}` |
@@ -196,8 +201,9 @@ Previous/Seek/SetPosition/Set(Volume)`, сигнал `Seeked`.
 
 `wave_start`/`wave_more`/`wave_feedback` — асинхронные: сначала резолвят
 радио-сессию, затем меняют очередь. `queue_set` с `play: true` тоже
-резолвит поток и запускает трек. `download_track` сразу отвечает `{ok, rev}`,
-а загрузка идёт в фоне: прогресс виден в `state.downloads`.
+резолвит поток и запускает трек. `download_track`/`download_tracks` сразу
+отвечают `{ok, rev}`, воркер качает очередь по одному треку: прогресс виден в
+`state.downloads`, длина очереди — в `state.downloadPending`.
 
 ## Конфигурация
 
