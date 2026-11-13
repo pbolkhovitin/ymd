@@ -226,6 +226,6 @@ Fallback на P0/M1: `mpv --no-video --ao=pipewire` (mpv установлен), 
 
 ## Что правим в документации
 
-- [x] `docs/03-noctalia-plugin.md` — фактический список методов `barWidget`/`ui`.
+- [x] `docs/design/noctalia.md` — фактический список методов `barWidget`/`ui`.
 - [ ] `docs/04-daemon.md` — уточнить поля niri/fullscreen (нет `is_fullscreen`).
 - [ ] `docs/07-roadmap.md` — скорректировать оценки (GStreamer заблокирован dev-пакетами).

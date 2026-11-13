@@ -24,7 +24,7 @@ else
 fi
 
 # 2. Документация новее кода?
-code_ts=$(git log -1 --format=%ct -- daemon plasmoid app packaging 2>/dev/null || echo 0)
+code_ts=$(git log -1 --format=%ct -- daemon plasmoid app noctalia packaging 2>/dev/null || echo 0)
 docs_ts=$(git log -1 --format=%ct -- README.md AGENTS.md docs notes 2>/dev/null || echo 0)
 
 if [ "${code_ts:-0}" -gt "${docs_ts:-0}" ]; then
@@ -39,7 +39,8 @@ fi
 # 3. Файлы кода без упоминания в документации.
 missing=""
 for file in daemon/src/*.rs plasmoid/contents/ui/*.qml plasmoid/contents/ui/*.js \
-    app/src/*.cpp app/qml/*.qml app/qml/*.js; do
+    app/src/*.cpp app/qml/*.qml app/qml/*.js \
+    noctalia/*.luau noctalia/lib/*.luau; do
   [ -e "$file" ] || continue
   base=$(basename "$file")
   case "$base" in main.rs|lib.rs|main.cpp) continue ;; esac

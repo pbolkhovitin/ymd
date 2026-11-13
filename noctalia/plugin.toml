@@ -1,0 +1,30 @@
+id = "pbolkhovitin/yandex-music"
+name = "Yandex Music"
+version = "0.2.0"
+plugin_api = 35
+author = "pbolkhovitin"
+license = "MIT"
+icon = "music"
+description = "Яндекс Музыка в баре и панели Noctalia через демон ymd."
+tags = ["music", "media", "yandex"]
+
+# Бар-виджет: иконка + «трек — артист», клики и колесо.
+[[widget]]
+id = "bar"
+entry = "widget.luau"
+hover_highlight = false
+
+# Диагностический виджет: печатает реальные имена методов barWidget.*/ui.*/noctalia.*
+[[widget]]
+id = "probe"
+entry = "probe.luau"
+
+# Фоновая подписка на SSE.
+[[service]]
+id = "bridge"
+entry = "bridge.luau"
+
+# Панель плеера: поиск, очередь, транспорт.
+[[panel]]
+id = "panel"
+entry = "panel.luau"
