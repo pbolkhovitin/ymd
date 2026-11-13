@@ -1,4 +1,4 @@
--- lib/ymd.luau — мини-клиент демона ymd (P0).
+-- lib/ymd.luau — мини-клиент демона ymd (HTTP /v1).
 -- Требует plugin_api >= 22 (require относительных модулей).
 
 local M = {}
@@ -36,72 +36,75 @@ local function code_of(resp)
   return resp.status or resp.code or resp.statusCode or -1
 end
 
--- GET /v1/... ; cb(data, err)
-function M.get(path, cb)
+-- Универсальный запрос: cb(data, err, status).
+-- err — короткий код для UI ("unauthorized", "offline", "bad json", …).
+function M.request(method, path, body, cb)
   local key = M.key()
   if not key then
-    cb(nil, "no session key (ymd not running?)")
+    cb(nil, "no-key", 0)
     return
+  end
+
+  local headers = { "X-YMD-Session: " .. key }
+  if body ~= nil then
+    headers[#headers + 1] = "Content-Type: application/json"
   end
 
   noctalia.http({
     url = M.base .. path,
-    method = "GET",
-    headers = { "X-YMD-Session: " .. key },
+    method = method,
+    headers = headers,
+    body = body ~= nil and noctalia.json.encode(body) or nil,
   }, function(resp)
-    local body = body_of(resp)
-    if code_of(resp) ~= 200 or not body then
-      cb(nil, "http " .. tostring(code_of(resp)))
+    local status = code_of(resp)
+    if status == 401 then
+      cb(nil, "unauthorized", status)
       return
     end
-    local ok, data = pcall(noctalia.json.decode, body)
+    if status ~= 200 then
+      cb(nil, "http " .. tostring(status), status)
+      return
+    end
+    local raw = body_of(resp)
+    if not raw then
+      cb(nil, "empty", status)
+      return
+    end
+    local ok, data = pcall(noctalia.json.decode, raw)
     if not ok then
-      cb(nil, "bad json")
+      cb(nil, "bad json", status)
       return
     end
-    cb(data, nil)
+    cb(data, nil, status)
   end)
 end
 
--- POST /v1/cmd { op = "..." }
+function M.get(path, cb)
+  M.request("GET", path, nil, cb)
+end
+
+function M.post(path, body, cb)
+  M.request("POST", path, body or {}, cb)
+end
+
+function M.del(path, cb)
+  M.request("DELETE", path, nil, cb)
+end
+
+-- POST /v1/cmd { op = "..." } / { op, payload }
 function M.cmd(op, cb)
-  local key = M.key()
-  if not key then
-    if cb then cb(false) end
-    return
-  end
-
-  noctalia.http({
-    url = M.base .. "/v1/cmd",
-    method = "POST",
-    headers = {
-      "X-YMD-Session: " .. key,
-      "Content-Type: application/json",
-    },
-    body = noctalia.json.encode({ op = op }),
-  }, function(resp)
-    if cb then cb(code_of(resp) == 200) end
+  M.post("/v1/cmd", { op = op }, function(_, err)
+    if cb then
+      cb(err == nil)
+    end
   end)
 end
 
--- POST /v1/cmd { op = "...", payload = {...} }
 function M.cmd_payload(op, payload, cb)
-  local key = M.key()
-  if not key then
-    if cb then cb(false) end
-    return
-  end
-
-  noctalia.http({
-    url = M.base .. "/v1/cmd",
-    method = "POST",
-    headers = {
-      "X-YMD-Session: " .. key,
-      "Content-Type: application/json",
-    },
-    body = noctalia.json.encode({ op = op, payload = payload }),
-  }, function(resp)
-    if cb then cb(code_of(resp) == 200) end
+  M.post("/v1/cmd", { op = op, payload = payload }, function(_, err)
+    if cb then
+      cb(err == nil)
+    end
   end)
 end
 
@@ -112,16 +115,54 @@ function M.urlencode(text)
   end))
 end
 
--- GET /v1/search?q=...
+-- GET-обёртки под конкретные разделы.
 function M.search(query, cb)
   M.get("/v1/search?q=" .. M.urlencode(query), cb)
+end
+
+function M.home(cb)
+  M.get("/v1/home", cb)
+end
+
+function M.metatags(cb)
+  M.get("/v1/discovery/metatags", cb)
+end
+
+function M.genres(cb)
+  M.get("/v1/discovery/genres", cb)
+end
+
+function M.tag(tag, cb)
+  M.get("/v1/discovery/tag?tag=" .. M.urlencode(tag), cb)
+end
+
+function M.playlist(uid, kind, cb)
+  M.get("/v1/playlist?uid=" .. tostring(uid) .. "&kind=" .. tostring(kind), cb)
+end
+
+function M.album(id, cb)
+  M.get("/v1/album?id=" .. M.urlencode(id), cb)
+end
+
+function M.favorites(cb)
+  M.get("/v1/favorites", cb)
+end
+
+function M.account(cb)
+  M.get("/v1/account", cb)
+end
+
+function M.radio(station, cb)
+  M.post("/v1/radio", { station = station }, cb)
 end
 
 -- SSE: on_state(table), on_close(reason)
 function M.subscribe(on_state, on_close)
   local key = M.key()
   if not key then
-    if on_close then on_close("no-key") end
+    if on_close then
+      on_close("no-key")
+    end
     return nil
   end
 
@@ -137,7 +178,9 @@ function M.subscribe(on_state, on_close)
       end
     end
   end, function()
-    if on_close then on_close("closed") end
+    if on_close then
+      on_close("closed")
+    end
   end)
 end
 
