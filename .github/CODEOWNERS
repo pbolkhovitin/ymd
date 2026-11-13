@@ -1,8 +1,9 @@
 # Владельцы каталогов: PR одного клиента не должен требовать ревью всех.
-# Впишите GitHub-логины соавторов KDE-клиентов вместо TODO.
+# Демон и общие доки — на обоих.
 
-/noctalia/  @pbolkhovitin
-/daemon/    @pbolkhovitin
-
-# /plasmoid/  TODO
-# /app/       TODO
+/noctalia/     @pbolkhovitin
+/plasmoid/     @leonidy-85
+/app/          @leonidy-85
+/daemon/       @pbolkhovitin @leonidy-85
+/packaging/    @pbolkhovitin @leonidy-85
+/docs/design/  @pbolkhovitin @leonidy-85

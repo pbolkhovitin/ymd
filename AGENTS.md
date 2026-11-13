@@ -107,10 +107,12 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 ## Следующий шаг
 
-1. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
+1. **Noctalia-панель**: обложка (`cover` в `/v1/state` приходит null), артист в
+   баре (хост режет ~22 символа), различимость паузы в баре, err/loading.
+2. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
    попапе (разведка — `notes/lyrics-findings.md`).
-2. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
-3. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
+3. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
+4. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
 
 Ограничение `ymd-qt`: меню трея на Wayland может не открываться при вызове
 через DBus (`ContextMenu` без input serial); клик по иконке и средняя кнопка

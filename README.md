@@ -128,7 +128,8 @@ bash packaging/build-qt-deb.sh --arch amd64
 
 ## Требования
 
-- KDE Plasma 6 (проверено на 6.6.6, Wayland).
+- KDE Plasma 6 (проверено на 6.6.6, Wayland) — для плазмоида и `ymd-qt`.
+- Noctalia 5.x на niri (Wayland, `plugin_api >= 35`) — для плагина `noctalia/`.
 - PipeWire + WirePlumber; GStreamer 1.24+ с плагинами good/bad/libav.
 - `playerctl`, `libsecret-tools`, `dbus-user-session`.
 - Для сборки: Docker с binfmt для arm64 (демон — Rust + GStreamer dev,
