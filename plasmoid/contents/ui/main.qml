@@ -26,6 +26,7 @@ PlasmoidItem {
     readonly property string status: state.status || "stopped"
     readonly property string quality: state.quality || "lossless"
     readonly property string qualityText: Format.qualityLabel(quality)
+    readonly property real volume: state.volume === undefined ? 0.8 : state.volume
     readonly property string repeatMode: (state.queue && state.queue.repeat) || "all"
     readonly property bool shuffle: !!(state.queue && state.queue.shuffle)
     readonly property var queueItems: (state.queue && state.queue.items) || []

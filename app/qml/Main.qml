@@ -20,6 +20,7 @@ Kirigami.ApplicationWindow {
     property int queueIndex: queue.index === undefined ? -1 : queue.index
     property int durationMs: track.durationMs || 0
     property int positionMs: st.positionMs || 0
+    property real volume: st.volume === undefined ? 0.8 : Number(st.volume)
     property string status: st.status || "stopped"
     property string quality: st.quality || "lossless"
     property bool playing: status === "playing"
@@ -93,7 +94,8 @@ Kirigami.ApplicationWindow {
                 }
 
                 Controls.ToolButton {
-                    icon.name: "window-close"
+                    text: "✕"
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
                     onClicked: root.visible = false
                     Controls.ToolTip.text: "Скрыть в трей"
                     Controls.ToolTip.visible: hovered
@@ -196,34 +198,73 @@ Kirigami.ApplicationWindow {
             }
 
             RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: "Громкость"
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Controls.Slider {
+                    id: volumeSlider
+                    Layout.fillWidth: true
+                    from: 0
+                    to: 1
+                    value: root.volume
+                    onPressedChanged: {
+                        if (!pressed) {
+                            client.cmd("volume", { "value": value });
+                        }
+                    }
+                }
+
+                Controls.Label {
+                    text: Math.round(volumeSlider.value * 100) + "%"
+                    color: Kirigami.Theme.disabledTextColor
+                    horizontalAlignment: Text.AlignRight
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 2
+                }
+            }
+
+            Binding {
+                target: volumeSlider
+                property: "value"
+                value: root.volume
+                when: !volumeSlider.pressed
+            }
+
+            RowLayout {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: Kirigami.Units.largeSpacing
 
                 Controls.ToolButton {
-                    icon.name: "media-skip-backward"
+                    text: "⏮"
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
                     onClicked: root.send("prev")
                     Controls.ToolTip.text: "Предыдущий"
                     Controls.ToolTip.visible: hovered
                 }
 
                 Controls.ToolButton {
-                    icon.name: root.playing ? "media-playback-pause" : "media-playback-start"
-                    icon.width: Kirigami.Units.iconSizes.medium
-                    icon.height: Kirigami.Units.iconSizes.medium
+                    text: root.playing ? "⏸" : "▶"
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 6
                     onClicked: root.send("toggle")
                     Controls.ToolTip.text: root.playing ? "Пауза" : "Играть"
                     Controls.ToolTip.visible: hovered
                 }
 
                 Controls.ToolButton {
-                    icon.name: "media-skip-forward"
+                    text: "⏭"
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
                     onClicked: root.send("next")
                     Controls.ToolTip.text: "Следующий"
                     Controls.ToolTip.visible: hovered
                 }
 
                 Controls.ToolButton {
-                    icon.name: "emblem-favorite"
+                    text: root.track.liked === true ? "♥" : "♡"
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
                     opacity: root.track.liked === true ? 1 : 0.45
                     onClicked: root.send("like")
                     Controls.ToolTip.text: "Нравится"

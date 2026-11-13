@@ -63,7 +63,7 @@
 |---|---|
 | `main.qml` | `PlasmoidItem`: ключ, polling, команды, поиск |
 | `CompactRepresentation.qml` | компакт в панели: иконка, «Трек — Артист», клики/колесо |
-| `FullRepresentation.qml` | попап: обложка, seek, транспорт, режимы, поиск, очередь |
+| `FullRepresentation.qml` | попап: обложка, seek, громкость, транспорт, режимы, поиск, очередь |
 | `TrackRow.qml` | строка трека для результатов и очереди |
 | `format.js` | чистые функции: обрезка, время, качество, repeat |
 
@@ -76,7 +76,7 @@
 | `src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling, команды, поиск, 401-retry |
 | `src/tray.{h,cpp}` | `KStatusNotifierItem`: окно, play/pause, next/prev, выход |
 | `src/main.cpp` | `QApplication`, связка QML ↔ клиент ↔ трей |
-| `qml/Main.qml` | окно: обложка, seek, транспорт, режимы, поиск, очередь |
+| `qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь |
 | `qml/TrackRow.qml` | строка трека |
 | `qml/format.js` | копия `plasmoid/contents/ui/format.js` |
 

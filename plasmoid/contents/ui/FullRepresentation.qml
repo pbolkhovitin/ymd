@@ -100,6 +100,44 @@ Item {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
 
+            PlasmaComponents3.Label {
+                text: "Громкость"
+                opacity: 0.7
+            }
+
+            PlasmaComponents3.Slider {
+                id: volumeSlider
+                Layout.fillWidth: true
+                from: 0
+                to: 1
+                value: applet.volume
+                onPressedChanged: {
+                    if (!pressed) {
+                        applet.cmd("volume", { value: value });
+                    }
+                }
+            }
+
+            PlasmaComponents3.Label {
+                text: Math.round(volumeSlider.value * 100) + "%"
+                opacity: 0.7
+                horizontalAlignment: Text.AlignRight
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 2
+            }
+        }
+
+        Binding {
+            target: volumeSlider
+            property: "value"
+            value: applet.volume
+            when: !volumeSlider.pressed
+            restoreMode: Binding.RestoreNone
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
             Item { Layout.fillWidth: true }
 
             PlasmaComponents3.ToolButton {

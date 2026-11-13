@@ -51,7 +51,7 @@ bash packaging/build-qt-deb.sh --arch amd64   # внутри запускает�
 | `app/src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling 1 с/3 с, команды, поиск, 401-retry |
 | `app/src/tray.{h,cpp}` | `KStatusNotifierItem`: показать окно, play/pause, next/prev, выход |
 | `app/src/main.cpp` | `QApplication`, связка QML ↔ клиент ↔ трей |
-| `app/qml/Main.qml` | окно: обложка, seek, транспорт, режимы, поиск, очередь, ошибки |
+| `app/qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, ошибки |
 | `app/qml/TrackRow.qml` | строка трека для результатов и очереди |
 | `app/qml/format.js` | общая копия `plasmoid/contents/ui/format.js` |
 
