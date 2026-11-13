@@ -77,6 +77,36 @@ bool YmdClient::searching() const
     return m_searching;
 }
 
+QVariantList YmdClient::playlists() const
+{
+    return m_playlists;
+}
+
+QVariantList YmdClient::playlistTracks() const
+{
+    return m_playlistTracks;
+}
+
+QString YmdClient::playlistTitle() const
+{
+    return m_playlistTitle;
+}
+
+QVariantList YmdClient::cacheItems() const
+{
+    return m_cacheItems;
+}
+
+qint64 YmdClient::cacheTotalBytes() const
+{
+    return m_cacheTotalBytes;
+}
+
+qint64 YmdClient::cacheLimitBytes() const
+{
+    return m_cacheLimitBytes;
+}
+
 void YmdClient::refresh()
 {
     if (!m_keyReady) {
@@ -99,6 +129,12 @@ void YmdClient::cmd(const QString &op)
 
 void YmdClient::cmd(const QString &op, const QVariantMap &payload)
 {
+    sendCmd(op, payload, {});
+}
+
+void YmdClient::sendCmd(const QString &op, const QVariantMap &payload,
+                        const std::function<void()> &onSuccess)
+{
     if (!m_keyReady) {
         readKey();
         if (!m_keyReady) {
@@ -113,7 +149,7 @@ void YmdClient::cmd(const QString &op, const QVariantMap &payload)
     QNetworkRequest request = makeRequest(QStringLiteral("/v1/cmd"));
     QNetworkReply *reply =
         m_nam.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, onSuccess]() {
         const int status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (status == 401) {
@@ -124,6 +160,9 @@ void YmdClient::cmd(const QString &op, const QVariantMap &payload)
             setError(errorText(reply));
         } else {
             setError(QString());
+            if (onSuccess) {
+                onSuccess();
+            }
             refresh();
         }
         reply->deleteLater();
@@ -198,6 +237,111 @@ void YmdClient::sendSearch(const QString &text, bool retried)
         setSearching(false);
         reply->deleteLater();
     });
+}
+
+void YmdClient::getJson(const QString &path,
+                        const std::function<void(const QJsonObject &)> &handler,
+                        bool retried)
+{
+    if (!m_keyReady) {
+        readKey();
+        if (!m_keyReady) {
+            scheduleKeyRetry();
+            return;
+        }
+    }
+
+    QNetworkReply *reply = m_nam.get(makeRequest(path));
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, path, handler, retried]() {
+        const int status =
+            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status == 401 && !retried) {
+            readKey();
+            if (m_keyReady) {
+                reply->deleteLater();
+                getJson(path, handler, true);
+                return;
+            }
+            setAuthFailed(true);
+        } else if (status >= 400 || reply->error() != QNetworkReply::NoError) {
+            setError(errorText(reply));
+        } else {
+            const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+            if (!document.isObject()) {
+                setError(QStringLiteral("Некорректный ответ демона"));
+            } else {
+                setAuthFailed(false);
+                setError(QString());
+                handler(document.object());
+            }
+        }
+        reply->deleteLater();
+    });
+}
+
+void YmdClient::loadPlaylists()
+{
+    getJson(QStringLiteral("/v1/playlists"), [this](const QJsonObject &object) {
+        m_playlists =
+            object.value(QStringLiteral("playlists")).toArray().toVariantList();
+        emit playlistsChanged();
+    });
+}
+
+void YmdClient::loadPlaylist(qint64 uid, qint64 kind)
+{
+    const QString path = QStringLiteral("/v1/playlist?uid=%1&kind=%2")
+                             .arg(uid)
+                             .arg(kind);
+    getJson(path, [this](const QJsonObject &object) {
+        const QJsonObject meta =
+            object.value(QStringLiteral("playlist")).toObject();
+        m_playlistTitle =
+            meta.value(QStringLiteral("title")).toString(QStringLiteral("Плейлист"));
+        m_playlistTracks =
+            object.value(QStringLiteral("tracks")).toArray().toVariantList();
+        emit playlistTracksChanged();
+    });
+}
+
+void YmdClient::loadCache()
+{
+    getJson(QStringLiteral("/v1/cache"), [this](const QJsonObject &object) {
+        m_cacheItems =
+            object.value(QStringLiteral("items")).toArray().toVariantList();
+        m_cacheTotalBytes = static_cast<qint64>(
+            object.value(QStringLiteral("totalBytes")).toDouble());
+        m_cacheLimitBytes = static_cast<qint64>(
+            object.value(QStringLiteral("limitBytes")).toDouble());
+        emit cacheChanged();
+    });
+}
+
+void YmdClient::download(const QVariantMap &item)
+{
+    QVariantMap payload;
+    payload.insert(QStringLiteral("track"), item);
+    sendCmd(QStringLiteral("download_track"), payload, {});
+}
+
+void YmdClient::removeCached(const QString &id)
+{
+    sendCmd(QStringLiteral("cache_remove"),
+            QVariantMap{{QStringLiteral("id"), id}},
+            [this]() { loadCache(); });
+}
+
+void YmdClient::clearCache()
+{
+    sendCmd(QStringLiteral("cache_clear"), {}, [this]() { loadCache(); });
+}
+
+void YmdClient::setCacheLimit(qint64 limitMb)
+{
+    sendCmd(QStringLiteral("cache_limit"),
+            QVariantMap{{QStringLiteral("limitMb"), limitMb}},
+            [this]() { loadCache(); });
 }
 
 void YmdClient::seek(qint64 positionMs)

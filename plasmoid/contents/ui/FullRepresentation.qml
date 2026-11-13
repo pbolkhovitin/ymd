@@ -12,11 +12,18 @@ Item {
     implicitWidth: Kirigami.Units.gridUnit * 24
     implicitHeight: column.implicitHeight + Kirigami.Units.largeSpacing * 2
 
-    ColumnLayout {
-        id: column
+    Component.onCompleted: applet.loadPlaylists()
+
+    PlasmaComponents3.ScrollView {
+        id: scroll
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.smallSpacing
+        contentWidth: availableWidth
+        padding: Kirigami.Units.largeSpacing
+
+        ColumnLayout {
+            id: column
+            width: scroll.availableWidth
+            spacing: Kirigami.Units.smallSpacing
 
         RowLayout {
             Layout.fillWidth: true
@@ -164,6 +171,13 @@ Item {
             }
 
             PlasmaComponents3.ToolButton {
+                icon.name: "download"
+                opacity: applet.track && applet.track.cached ? 0.5 : 1
+                enabled: !!applet.track
+                onClicked: applet.cmd("download_track", { track: applet.track })
+            }
+
+            PlasmaComponents3.ToolButton {
                 icon.name: "media-playlist-shuffle"
                 onClicked: applet.cmd("wave_start")
             }
@@ -226,6 +240,54 @@ Item {
             visible: text !== ""
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            PlasmaComponents3.Label {
+                text: "Плейлисты"
+                opacity: 0.7
+            }
+
+            PlasmaComponents3.ComboBox {
+                id: playlistBox
+                Layout.fillWidth: true
+                model: applet.playlists
+                textRole: "title"
+                onActivated: {
+                    var playlist = applet.playlists[currentIndex];
+                    if (playlist) {
+                        applet.loadPlaylist(playlist.uid, playlist.kind);
+                    }
+                }
+            }
+
+            PlasmaComponents3.Button {
+                text: "Играть"
+                enabled: applet.playlistTracks.length > 0
+                onClicked: applet.cmd("queue_set", {
+                    tracks: applet.playlistTracks,
+                    index: 0,
+                    play: true
+                })
+            }
+        }
+
+        Repeater {
+            model: applet.downloads
+
+            delegate: PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                visible: modelData.state === "downloading"
+                text: "⤓ " + (modelData.title || modelData.id)
+                    + (modelData.total > 0
+                        ? " · " + Math.round(modelData.bytes * 100 / modelData.total) + "%"
+                        : "")
+                opacity: 0.7
+                elide: Text.ElideRight
+            }
+        }
+
         Rectangle {
             Layout.fillWidth: true
             height: 1
@@ -274,4 +336,5 @@ Item {
             }
         }
     }
+}
 }

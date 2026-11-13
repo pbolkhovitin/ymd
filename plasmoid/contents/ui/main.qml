@@ -17,6 +17,9 @@ PlasmoidItem {
     property int lastRev: -1
     property var searchResults: []
     property string searchHint: ""
+    property var playlists: []
+    property var playlistTracks: []
+    property string playlistTitle: ""
 
     readonly property var track: state.track || null
     readonly property string title: track ? (track.title || "") : ""
@@ -31,6 +34,7 @@ PlasmoidItem {
     readonly property bool shuffle: !!(state.queue && state.queue.shuffle)
     readonly property var queueItems: (state.queue && state.queue.items) || []
     readonly property int queueIndex: (state.queue && state.queue.index) || 0
+    readonly property var downloads: state.downloads || []
 
     compactRepresentation: CompactRepresentation { applet: root }
     fullRepresentation: FullRepresentation { applet: root }
@@ -149,6 +153,63 @@ PlasmoidItem {
         xhr.ontimeout = function() { searchHint = "Поиск не отвечает"; };
         xhr.send();
     }
+    function loadPlaylists() {
+        if (!sessionKey) return;
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", baseUrl() + "/v1/playlists");
+        xhr.setRequestHeader("X-YMD-Session", sessionKey);
+        xhr.timeout = 5000;
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status === 200) {
+                try {
+                    var list = JSON.parse(xhr.responseText).playlists || [];
+                    playlists = list;
+                    if (list.length > 0 && playlistTracks.length === 0) {
+                        loadPlaylist(list[0].uid, list[0].kind);
+                    }
+                } catch (e) {
+                    playlists = [];
+                    lastError = "Некорректный список плейлистов";
+                }
+            } else if (xhr.status === 401) {
+                keyRetried = true;
+                sessionKey = "";
+                keyReady = false;
+                requestKey();
+            } else {
+                lastError = "Плейлисты недоступны (HTTP " + xhr.status + ")";
+            }
+        };
+        xhr.ontimeout = function() { lastError = "Плейлисты не отвечают"; };
+        xhr.send();
+    }
+
+    function loadPlaylist(uid, kind) {
+        playlistTracks = [];
+        playlistTitle = "";
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", baseUrl() + "/v1/playlist?uid=" + uid + "&kind=" + kind);
+        xhr.setRequestHeader("X-YMD-Session", sessionKey);
+        xhr.timeout = 8000;
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status === 200) {
+                try {
+                    var data = JSON.parse(xhr.responseText);
+                    playlistTitle = (data.playlist && data.playlist.title) || "Плейлист";
+                    playlistTracks = data.tracks || [];
+                } catch (e) {
+                    lastError = "Некорректный плейлист";
+                }
+            } else {
+                lastError = "Плейлист недоступен (HTTP " + xhr.status + ")";
+            }
+        };
+        xhr.ontimeout = function() { lastError = "Плейлист не отвечает"; };
+        xhr.send();
+    }
+
     function seek(ms) { cmd("seek", { positionMs: Math.round(ms) }); }
     function cycleQuality() { cmd("quality", { value: Format.qualityNext(quality) }); }
 
@@ -164,7 +225,12 @@ PlasmoidItem {
                 lastError = "Ключ не найден. Запущен ли ymd?";
             }
             disconnectSource(sourceName);
-            if (keyReady) refresh();
+            if (keyReady) {
+                refresh();
+                if (playlists.length === 0) {
+                    loadPlaylists();
+                }
+            }
         }
     }
 
@@ -181,6 +247,12 @@ PlasmoidItem {
         running: !root.keyReady && !root.authFailed
         repeat: true
         onTriggered: root.requestKey()
+    }
+
+    onExpandedChanged: {
+        if (expanded) {
+            loadPlaylists();
+        }
     }
 
     Component.onCompleted: requestKey()

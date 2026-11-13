@@ -61,6 +61,23 @@ function repeatNext(mode) {
     }
 }
 
+function bytes(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n) || n < 0) {
+        n = 0;
+    }
+    if (n < 1024) {
+        return Math.round(n) + " Б";
+    }
+    var units = ["КБ", "МБ", "ГБ", "ТБ"];
+    var index = -1;
+    do {
+        n /= 1024;
+        index += 1;
+    } while (n >= 1024 && index < units.length - 1);
+    return (n >= 10 ? Math.round(n) : n.toFixed(1)) + " " + units[index];
+}
+
 function trackLine(item) {
     if (!item) {
         return "";
@@ -79,6 +96,7 @@ if (typeof module !== "undefined" && module.exports) {
         qualityLabel: qualityLabel,
         qualityNext: qualityNext,
         repeatNext: repeatNext,
+        bytes: bytes,
         trackLine: trackLine,
     };
 }
