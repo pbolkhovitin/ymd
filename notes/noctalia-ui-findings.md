@@ -12,6 +12,9 @@
   отвечает 502 (`Metatag mood:calm not found`), а
   `?tag=Осенняя%20музыка` — 200 `{tag, title, station: "mood:autumn", playlists}`.
   Жанры наоборот: `/genres` даёт `id`, станция строится как `genre:<id>`.
+- `/v1/discovery/tag` не всегда даёт `station`: у «Душевное» `station = null`,
+  у «Осенняя музыка» — `mood:autumn`. Кнопка «Радио по подборке» показывается
+  только при непустой станции.
 - `/v1/home` — `blocks[].items[]` с `kind`: `playlist` (`uid`, `playlistKind`),
   `album` (`id`), чарт — плоские треки без `kind`.
 - `/v1/album?id=` — volumes сплющены в один список треков; добавлен из-за
