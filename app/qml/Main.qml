@@ -33,7 +33,11 @@ Kirigami.ApplicationWindow {
     property string repeatLabel: repeatMode === "all" ? "все"
         : (repeatMode === "one" ? "один" : "выкл")
     property string statusLine: (playing ? "Играет" : (status === "paused" ? "Пауза" : "Остановлено"))
-        + " · " + Format.qualityLabel(quality)
+        + " · " + Format.streamLabel(quality, st.codec, st.bitrateKbps)
+    property string playlistFilter: ""
+    property int deletePlaylistKind: 0
+    property string deletePlaylistTitle: ""
+    property var actionTrack: ({})
     property var downloads: st.downloads || []
     property int downloadPending: st.downloadPending || 0
 
@@ -46,6 +50,39 @@ Kirigami.ApplicationWindow {
             return;
         }
         client.download(item);
+    }
+
+    function likeItem(item) {
+        if (!item || item.id === undefined) {
+            return;
+        }
+        client.likeTrack(String(item.id), item.liked !== true);
+    }
+
+    function enqueueItem(item) {
+        if (!item || item.id === undefined) {
+            return;
+        }
+        client.cmd("enqueue", item);
+    }
+
+    function openAddToPlaylist(item) {
+        if (!item || item.id === undefined) {
+            return;
+        }
+        root.actionTrack = item;
+        addToPlaylistDialog.open();
+    }
+
+    function filteredTracks() {
+        var query = playlistFilter.trim().toLowerCase();
+        if (!query) {
+            return client.playlistTracks;
+        }
+        return client.playlistTracks.filter(function(item) {
+            var artists = (item.artists || []).join(", ");
+            return (String(item.title || "") + " " + artists).toLowerCase().indexOf(query) >= 0;
+        });
     }
 
     onClosing: function(close) {
@@ -283,7 +320,8 @@ Kirigami.ApplicationWindow {
                     text: root.track.liked === true ? "♥" : "♡"
                     font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
                     opacity: root.track.liked === true ? 1 : 0.45
-                    onClicked: root.send("like")
+                    enabled: root.track.id !== undefined
+                    onClicked: root.likeItem(root.track)
                     Controls.ToolTip.text: "Нравится"
                     Controls.ToolTip.visible: hovered
                 }
@@ -430,6 +468,11 @@ Kirigami.ApplicationWindow {
                     showDownload: true
                     onClicked: client.cmd("play_track", client.searchResults[index])
                     onDownloadClicked: root.downloadItem(client.searchResults[index])
+                    onPlayRequested: client.cmd("play_track", client.searchResults[index])
+                    onEnqueueRequested: root.enqueueItem(client.searchResults[index])
+                    onLikeRequested: root.likeItem(client.searchResults[index])
+                    onAddToPlaylistRequested: root.openAddToPlaylist(client.searchResults[index])
+                    onCopyLinkRequested: client.copyLink(String(client.searchResults[index].id))
                 }
             }
 
@@ -449,8 +492,19 @@ Kirigami.ApplicationWindow {
                     showIndex: true
                     current: index === root.queueIndex
                     showDownload: true
+                    reorderable: true
+                    showRemoveFromQueue: true
+                    showEnqueue: false
                     onClicked: client.cmd("queue_play", { "index": index })
                     onDownloadClicked: root.downloadItem(root.queueItems[index])
+                    onPlayRequested: client.cmd("queue_play", { "index": index })
+                    onLikeRequested: root.likeItem(root.queueItems[index])
+                    onAddToPlaylistRequested: root.openAddToPlaylist(root.queueItems[index])
+                    onCopyLinkRequested: client.copyLink(String(root.queueItems[index].id))
+                    onRemoveFromQueueRequested: client.cmd("queue_remove", { "index": index })
+                    onMoveRequested: function(from, to) {
+                        client.cmd("queue_move", { "from": from, "to": to });
+                    }
                 }
             }
 
@@ -495,11 +549,14 @@ Kirigami.ApplicationWindow {
         property bool showingTracks: false
         property bool loadingPlaylists: false
         property bool loadingTracks: false
+        property int currentKind: 0
 
         onOpened: {
             showingTracks = false;
             loadingTracks = false;
             loadingPlaylists = true;
+            root.playlistFilter = "";
+            playlistSearchField.text = "";
             client.loadPlaylists();
         }
 
@@ -512,7 +569,11 @@ Kirigami.ApplicationWindow {
 
                 Controls.ToolButton {
                     text: "←"
-                    onClicked: playlistsDialog.showingTracks = false
+                    onClicked: {
+                        playlistsDialog.showingTracks = false;
+                        root.playlistFilter = "";
+                        playlistSearchField.text = "";
+                    }
                     Controls.ToolTip.text: "К списку плейлистов"
                     Controls.ToolTip.visible: hovered
                 }
@@ -553,6 +614,40 @@ Kirigami.ApplicationWindow {
                 color: Kirigami.Theme.disabledTextColor
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                visible: playlistsDialog.showingTracks
+
+                Controls.TextField {
+                    id: playlistSearchField
+                    Layout.fillWidth: true
+                    placeholderText: "Поиск по плейлисту"
+                    onTextChanged: root.playlistFilter = text
+                }
+
+                Controls.Label {
+                    text: root.filteredTracks().length + " / " + client.playlistTracks.length
+                    color: Kirigami.Theme.disabledTextColor
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !playlistsDialog.showingTracks
+
+                Controls.Button {
+                    text: "Создать плейлист"
+                    onClicked: {
+                        newPlaylistField.text = "";
+                        newPlaylistDialog.open();
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+            }
+
             Controls.Label {
                 Layout.fillWidth: true
                 visible: !playlistsDialog.showingTracks && client.playlists.length === 0
@@ -573,6 +668,9 @@ Kirigami.ApplicationWindow {
                     onClicked: {
                         playlistsDialog.loadingTracks = true;
                         playlistsDialog.showingTracks = true;
+                        playlistsDialog.currentKind = modelData.kind;
+                        root.playlistFilter = "";
+                        playlistSearchField.text = "";
                         client.loadPlaylist(modelData.uid, modelData.kind);
                     }
 
@@ -620,6 +718,17 @@ Kirigami.ApplicationWindow {
                                 color: Kirigami.Theme.disabledTextColor
                             }
                         }
+
+                        Controls.ToolButton {
+                            text: "🗑"
+                            onClicked: {
+                                root.deletePlaylistKind = modelData.kind;
+                                root.deletePlaylistTitle = modelData.title || "Плейлист";
+                                deletePlaylistDialog.open();
+                            }
+                            Controls.ToolTip.text: "Удалить плейлист"
+                            Controls.ToolTip.visible: hovered
+                        }
                     }
                 }
             }
@@ -629,9 +738,9 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: playlistsDialog.showingTracks
-                    && client.playlistTracks.length > 0
+                    && root.filteredTracks().length > 0
                 clip: true
-                model: client.playlistTracks
+                model: root.filteredTracks()
 
                 delegate: TrackRow {
                     width: playlistTracksView.width
@@ -639,15 +748,129 @@ Kirigami.ApplicationWindow {
                     rowIndex: index
                     showIndex: true
                     showDownload: true
+                    showRemoveFromPlaylist: true
                     onClicked: client.cmd("play_track", modelData)
                     onDownloadClicked: root.downloadItem(modelData)
+                    onPlayRequested: client.cmd("play_track", modelData)
+                    onEnqueueRequested: root.enqueueItem(modelData)
+                    onLikeRequested: root.likeItem(modelData)
+                    onAddToPlaylistRequested: root.openAddToPlaylist(modelData)
+                    onCopyLinkRequested: client.copyLink(String(modelData.id))
+                    onRemoveFromPlaylistRequested: {
+                        var original = modelData.playlistIndex !== undefined
+                            ? modelData.playlistIndex
+                            : index;
+                        client.removeTrackFromPlaylist(playlistsDialog.currentKind, original);
+                    }
                 }
             }
 
             Controls.Label {
                 Layout.fillWidth: true
-                visible: playlistsDialog.showingTracks && client.playlistTracks.length === 0
-                text: playlistsDialog.loadingTracks ? "Загрузка треков…" : "В плейлисте нет треков"
+                visible: playlistsDialog.showingTracks && root.filteredTracks().length === 0
+                text: playlistsDialog.loadingTracks ? "Загрузка треков…"
+                    : (client.playlistTracks.length === 0 ? "В плейлисте нет треков"
+                                                          : "Ничего не найдено")
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+
+    Controls.Dialog {
+        id: newPlaylistDialog
+        title: "Новый плейлист"
+        modal: true
+        width: Math.min(360, root.width - Kirigami.Units.largeSpacing * 2)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Ok | Controls.Dialog.Cancel
+
+        onAccepted: client.createPlaylist(newPlaylistField.text)
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            Controls.Label {
+                text: "Название"
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Controls.TextField {
+                id: newPlaylistField
+                Layout.fillWidth: true
+                placeholderText: "Например, Дорога"
+                onAccepted: newPlaylistDialog.accept()
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Плейлист будет приватным"
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+
+    Controls.Dialog {
+        id: deletePlaylistDialog
+        title: "Удалить плейлист?"
+        modal: true
+        width: Math.min(360, root.width - Kirigami.Units.largeSpacing * 2)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Yes | Controls.Dialog.No
+
+        onAccepted: client.deletePlaylist(root.deletePlaylistKind)
+
+        contentItem: Controls.Label {
+            text: "«" + root.deletePlaylistTitle + "» будет удалён из Яндекс Музыки."
+            wrapMode: Text.WordWrap
+        }
+    }
+
+    Controls.Dialog {
+        id: addToPlaylistDialog
+        title: "Добавить в плейлист"
+        modal: true
+        width: Math.min(380, root.width - Kirigami.Units.largeSpacing * 2)
+        height: Math.min(480, root.height - Kirigami.Units.largeSpacing * 2)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Close
+
+        onOpened: client.loadPlaylists()
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: (root.actionTrack.title || "Трек")
+                    + " · " + (root.actionTrack.artists || []).join(", ")
+                font.bold: true
+                elide: Text.ElideRight
+            }
+
+            ListView {
+                id: addPlaylistView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: client.playlists
+
+                delegate: Controls.ItemDelegate {
+                    width: addPlaylistView.width
+                    text: modelData.title + "  (" + (modelData.trackCount || 0) + ")"
+                    onClicked: {
+                        client.addTrackToPlaylist(modelData.kind, root.actionTrack);
+                        addToPlaylistDialog.close();
+                    }
+                }
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                visible: client.playlists.length === 0
+                text: "Плейлистов нет"
                 color: Kirigami.Theme.disabledTextColor
             }
         }

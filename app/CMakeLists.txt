@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Network Qml Quick QuickControls2 Widgets Test)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 find_package(KF6Kirigami REQUIRED)
 find_package(KF6StatusNotifierItem REQUIRED)
 
@@ -53,6 +53,7 @@ qt_add_executable(test_ymdclient
 target_include_directories(test_ymdclient PRIVATE src)
 target_link_libraries(test_ymdclient PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Network
     Qt6::Test
 )

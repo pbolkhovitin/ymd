@@ -1,7 +1,9 @@
 #include "ymdclient.h"
 
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -285,12 +287,19 @@ void YmdClient::loadPlaylists()
     getJson(QStringLiteral("/v1/playlists"), [this](const QJsonObject &object) {
         m_playlists =
             object.value(QStringLiteral("playlists")).toArray().toVariantList();
+        if (m_playlistUid == 0 && !m_playlists.isEmpty()) {
+            m_playlistUid = m_playlists.first().toMap()
+                                .value(QStringLiteral("uid"))
+                                .toLongLong();
+        }
         emit playlistsChanged();
     });
 }
 
 void YmdClient::loadPlaylist(qint64 uid, qint64 kind)
 {
+    m_playlistUid = uid;
+    m_playlistKind = kind;
     const QString path = QStringLiteral("/v1/playlist?uid=%1&kind=%2")
                              .arg(uid)
                              .arg(kind);
@@ -349,6 +358,75 @@ void YmdClient::setCacheLimit(qint64 limitMb)
     sendCmd(QStringLiteral("cache_limit"),
             QVariantMap{{QStringLiteral("limitMb"), limitMb}},
             [this]() { loadCache(); });
+}
+
+void YmdClient::createPlaylist(const QString &title)
+{
+    if (title.trimmed().isEmpty()) {
+        setError(QStringLiteral("Название плейлиста пустое"));
+        return;
+    }
+    sendCmd(QStringLiteral("playlist_create"),
+            QVariantMap{{QStringLiteral("title"), title.trimmed()},
+                        {QStringLiteral("visibility"), QStringLiteral("private")}},
+            [this]() { loadPlaylists(); });
+}
+
+void YmdClient::deletePlaylist(qint64 kind)
+{
+    sendCmd(QStringLiteral("playlist_delete"),
+            QVariantMap{{QStringLiteral("kind"), kind}},
+            [this, kind]() {
+                loadPlaylists();
+                if (m_playlistKind == kind) {
+                    m_playlistTracks.clear();
+                    m_playlistTitle.clear();
+                    emit playlistTracksChanged();
+                }
+            });
+}
+
+void YmdClient::addTrackToPlaylist(qint64 kind, const QVariantMap &track)
+{
+    sendCmd(QStringLiteral("playlist_add_tracks"),
+            QVariantMap{{QStringLiteral("kind"), kind},
+                        {QStringLiteral("tracks"), QVariantList{track}}},
+            [this, kind]() {
+                loadPlaylists();
+                if (m_playlistKind == kind && m_playlistUid != 0) {
+                    loadPlaylist(m_playlistUid, kind);
+                }
+            });
+}
+
+void YmdClient::removeTrackFromPlaylist(qint64 kind, int index)
+{
+    sendCmd(QStringLiteral("playlist_remove_track"),
+            QVariantMap{{QStringLiteral("kind"), kind},
+                        {QStringLiteral("index"), index}},
+            [this, kind]() {
+                loadPlaylists();
+                if (m_playlistUid != 0) {
+                    loadPlaylist(m_playlistUid, kind);
+                }
+            });
+}
+
+void YmdClient::likeTrack(const QString &id, bool liked)
+{
+    sendCmd(QStringLiteral("like_track"),
+            QVariantMap{{QStringLiteral("id"), id},
+                        {QStringLiteral("liked"), liked}},
+            {});
+}
+
+void YmdClient::copyLink(const QString &id)
+{
+    if (id.isEmpty()) {
+        return;
+    }
+    QGuiApplication::clipboard()->setText(
+        QStringLiteral("https://music.yandex.ru/track/%1").arg(id));
 }
 
 void YmdClient::seek(qint64 positionMs)

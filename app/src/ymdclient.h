@@ -66,6 +66,12 @@ public:
     Q_INVOKABLE void removeCached(const QString &id);
     Q_INVOKABLE void clearCache();
     Q_INVOKABLE void setCacheLimit(qint64 limitMb);
+    Q_INVOKABLE void createPlaylist(const QString &title);
+    Q_INVOKABLE void deletePlaylist(qint64 kind);
+    Q_INVOKABLE void addTrackToPlaylist(qint64 kind, const QVariantMap &track);
+    Q_INVOKABLE void removeTrackFromPlaylist(qint64 kind, int index);
+    Q_INVOKABLE void likeTrack(const QString &id, bool liked);
+    Q_INVOKABLE void copyLink(const QString &id);
 
 signals:
     void stateChanged();
@@ -104,6 +110,8 @@ private:
     QVariantList m_playlists;
     QVariantList m_playlistTracks;
     QString m_playlistTitle;
+    qint64 m_playlistUid = 0;
+    qint64 m_playlistKind = 0;
     QVariantList m_cacheItems;
     qint64 m_cacheTotalBytes = 0;
     qint64 m_cacheLimitBytes = 0;
