@@ -75,6 +75,7 @@ pub async fn serve(
         .route("/v1/search", get(search))
         .route("/v1/playlists", get(playlists))
         .route("/v1/playlist", get(playlist))
+        .route("/v1/album", get(album))
         .route("/v1/favorites", get(favorites))
         .route("/v1/home", get(home))
         .route("/v1/discovery/metatags", get(metatags))
@@ -256,6 +257,71 @@ async fn playlist(
 
     Ok(Json(serde_json::json!({
         "playlist": meta,
+        "tracks": tracks,
+    })))
+}
+
+#[derive(Deserialize)]
+struct AlbumParams {
+    id: String,
+}
+
+/// `GET /v1/album?id=` — альбом и его треки (volumes сплющиваются в список).
+async fn album(
+    AxumState(shared): AxumState<Shared>,
+    headers: HeaderMap,
+    Query(params): Query<AlbumParams>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !authorized(&headers, &shared.key) {
+        return Err(unauthorized());
+    }
+
+    let client = crate::api::Client::from_store().map_err(|err| bad_gateway(err.to_string()))?;
+    let value = client
+        .album(params.id.trim())
+        .await
+        .map_err(|err| bad_gateway(err.to_string()))?;
+
+    let tracks: Vec<serde_json::Value> = value
+        .get("volumes")
+        .and_then(serde_json::Value::as_array)
+        .map(|volumes| {
+            volumes
+                .iter()
+                .filter_map(|volume| volume.get("tracks").and_then(serde_json::Value::as_array))
+                .flatten()
+                .filter_map(simplify_track)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let artists: Vec<String> = value
+        .get("artists")
+        .and_then(serde_json::Value::as_array)
+        .map(|artists| {
+            artists
+                .iter()
+                .filter_map(|artist| {
+                    artist
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "album": {
+            "id": params.id,
+            "title": text_of(value.get("title")).unwrap_or_else(|| "Альбом".to_string()),
+            "artists": artists,
+            "year": value.get("year").and_then(serde_json::Value::as_u64),
+            "cover": value
+                .get("coverUri")
+                .and_then(serde_json::Value::as_str)
+                .and_then(crate::state::cover_url),
+        },
         "tracks": tracks,
     })))
 }
