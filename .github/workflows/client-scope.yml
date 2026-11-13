@@ -1,0 +1,33 @@
+name: client-scope
+
+# Один PR — один клиент. Правки в noctalia/ и в plasmoid|app/ одновременно
+# почти всегда означают, что смешаны две задачи: их ревью и откат идут
+# независимо, а CODEOWNERS требует разных людей.
+
+on:
+  pull_request:
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Проверить, что PR не трогает оба клиента
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -u
+          files=$(git diff --name-only "$BASE...HEAD")
+          noctalia=$(printf '%s\n' "$files" | grep -c '^noctalia/' || true)
+          kde=$(printf '%s\n' "$files" | grep -cE '^(plasmoid|app)/' || true)
+          printf 'noctalia: %s файлов, kde: %s файлов\n' "$noctalia" "$kde"
+          if [ "$noctalia" -gt 0 ] && [ "$kde" -gt 0 ]; then
+            echo
+            echo "PR меняет и Noctalia, и KDE-клиент. Разделите на два PR:"
+            printf '%s\n' "$files" | grep -E '^(noctalia|plasmoid|app)/' | sed 's/^/  /'
+            exit 1
+          fi
+          echo "область PR однородна"

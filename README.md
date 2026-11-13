@@ -136,6 +136,12 @@ bash packaging/build-qt-deb.sh --arch amd64
 - Для сборки: Docker с binfmt для arm64 (демон — Rust + GStreamer dev,
   приложение — Qt 6 + Kirigami dev; всё уже в `packaging/Dockerfile*`).
 
+## Участие в разработке
+
+Подпись коммитов, ветки, правило «один PR — один клиент» и проверки CI —
+`CONTRIBUTING.md`. Коротко: свой `user.email` в git, ветка от свежего `main`,
+squash-merge, `scripts/docs-check.sh` перед PR.
+
 ## Связанные материалы
 
 Реверс-инжиниринг официального клиента: `~/github/yandex-music-research` —
