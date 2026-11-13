@@ -113,9 +113,10 @@
 | GET | `/v1/search?q=&page=` | поиск, `{query, tracks: [...]}` |
 | GET | `/v1/playlists` | плейлисты пользователя, `{playlists: [...]}` |
 | GET | `/v1/playlist?uid=&kind=` | плейлист и треки, `{playlist, tracks: [...]}` |
+| GET | `/v1/album?id=` | альбом и треки (volumes сплющены), `{album, tracks}` |
 | GET | `/v1/favorites` | «Мне нравится» (`kind = 3`): `{playlist, tracks}` |
 | GET | `/v1/home` | блоки главной: `{blocks: [{id, title, type, items}]}` |
-| GET | `/v1/discovery/metatags` | деревья настроений/занятий/жанров/эпох |
+| GET | `/v1/discovery/metatags` | группы подборок: `{groups: [{id, title, tags: [{tag, title, children}]}]}` |
 | GET | `/v1/discovery/genres` | жанры и поджанры, `station` для радио |
 | GET | `/v1/discovery/tag?tag=` | плейлисты тега + `station` |
 | POST | `/v1/radio` | `{station}` — запустить радио (`genre:rock`, `mood:calm`, `artist:42`) |

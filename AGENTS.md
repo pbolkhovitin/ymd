@@ -107,14 +107,16 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 ## Следующий шаг
 
-1. **Noctalia-панель**: обложка (`cover` в `/v1/state` приходит null), артист в
-   баре (хост режет ~22 символа), различимость паузы в баре, err/loading.
-2. **UI открытия и входа в клиентах**: главная, жанры/настроения, избранное,
-   экран Device Flow (API уже в демоне — `docs/12-discovery-account.md`).
-3. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
+1. **Бар Noctalia**: артист теряется (хост режет ~22 символа), play/pause
+   неразличимы (статичный глиф), нет retry при ошибке.
+2. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
    попапе (разведка — `notes/lyrics-findings.md`).
-4. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
-5. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
+3. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
+4. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
+
+UI discovery и вход в Noctalia-панели готовы: `docs/design/noctalia.md`
+(виды и источники), `notes/noctalia-ui-findings.md` (грабли Yoga и Luau).
+Plasma и `ymd-qt` — зона Леонида, этапы 5 и 7 в `docs/12-discovery-account.md`.
 
 Ограничение `ymd-qt`: меню трея на Wayland может не открываться при вызове
 через DBus (`ContextMenu` без input serial); клик по иконке и средняя кнопка
