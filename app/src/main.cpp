@@ -10,6 +10,11 @@
 
 int main(int argc, char *argv[])
 {
+    // Kirigami takes the KDE color scheme from the platform theme.
+    if (qEnvironmentVariableIsEmpty("XDG_CURRENT_DESKTOP")) {
+        qputenv("XDG_CURRENT_DESKTOP", QByteArrayLiteral("KDE"));
+    }
+
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("ymd-qt"));
     QApplication::setApplicationDisplayName(QStringLiteral("Yandex Music"));
