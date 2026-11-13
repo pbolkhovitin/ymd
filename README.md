@@ -1,8 +1,9 @@
 # ym-noctalia
 
-Клиент **Яндекс Музыки** для **KDE Plasma 6**: плазмоид в панели, отдельное
-приложение на Qt/Kirigami и Rust-демон `ymd`. Без Electron, без анимаций по
-умолчанию, с нативным PipeWire и MPRIS.
+Клиент **Яндекс Музыки** для **KDE Plasma 6** и **Noctalia** (niri): плазмоид
+в панели, отдельное приложение на Qt/Kirigami, плагин для бара Noctalia и
+Rust-демон `ymd`. Без Electron, без анимаций по умолчанию, с нативным PipeWire
+и MPRIS.
 
 ## Из чего состоит
 
@@ -11,10 +12,12 @@
 | `ymd` | токен, API Яндекса, GStreamer-плеер, MPRIS, офлайн-кэш, «Моя волна» | Rust, systemd --user |
 | `plasma-widget-ymd` | компактный виджет в панели и попап: поиск, очередь, транспорт, режимы | QML / Plasma 6 |
 | `ymd-qt` | отдельное окно + трей: те же поиск, очередь, транспорт, режимы | Qt 6 / Kirigami |
+| `yandex-music` (Noctalia) | бар-виджет «трек — артист» и панель: поиск, очередь, транспорт | Luau, plugin_api 35 |
 
-Плазмоид не знает токен и не обращается к API Яндекса. Он общается только с
-локальным HTTP API `127.0.0.1:8765`; ключ доступа — `$XDG_RUNTIME_DIR/ymd/session.key`
-(0600), плазмоид получает его командой `ymd session-key`.
+Плазмоид, `ymd-qt` и плагин Noctalia не знают токен и не обращаются к API
+Яндекса. Они общаются только с локальным HTTP API `127.0.0.1:8765`; ключ
+доступа — `$XDG_RUNTIME_DIR/ymd/session.key` (0600), клиенты получают его
+командой `ymd session-key` или чтением файла.
 
 Демон экспортирует MPRIS `org.mpris.MediaPlayer2.ymd`, поэтому медиа-клавиши и
 встроенный виджет `media` Plasma работают без нашего плазмоида.
@@ -35,6 +38,19 @@ systemctl --user enable --now ymd
 После установки добавьте «Yandex Music» на панель: правый клик по панели →
 «Добавить виджеты» → «Yandex Music». Отдельное приложение запускается из меню
 или командой `ymd-qt`.
+
+## Установка плагина Noctalia
+
+Плагин живёт в `noctalia/` и подключается симлинком (Noctalia перезаписывает
+собственные копии при обновлении, поэтому источник — репозиторий):
+
+```bash
+bash scripts/install-noctalia.sh          # симлинк + reload, если Noctalia запущена
+noctalia msg plugins list                 # должен появиться pbolkhovitin/yandex-music
+```
+
+Виджет добавляется в бар через настройки Noctalia (`Bar` → `widgets`), панель
+открывается правым кликом по виджету. Нужен Noctalia 5.x и `plugin_api >= 35`.
 
 ## Быстрый старт для разработки
 
@@ -100,7 +116,10 @@ bash packaging/build-qt-deb.sh --arch amd64
 | `docs/03-kde-plasmoid.md` | пакет Plasma, ключ, polling, виджет и попап |
 | `docs/04-daemon.md` | модули демона, CLI, MPRIS, кэш, волна, качество |
 | `docs/05-feature-matrix.md` | паритет с официальным клиентом |
-| `docs/06-design.md` | дизайн плазмоида: Kirigami, цвета, запрет анимаций |
+| `docs/design/ui-rules.md` | общие правила UI: состояния, обрезка, акценты, анимации |
+| `docs/design/plasma.md` | дизайн плазмоида: Kirigami, цвета, запрет анимаций |
+| `docs/design/noctalia.md` | плагин Noctalia: бар, панель, `ui.*`, ограничения хоста |
+| `docs/design/noctalia-design.md` | дизайн-язык панели Noctalia и замеры |
 | `docs/07-roadmap.md` | этапы и следующий шаг |
 | `docs/08-risks.md` | риски и открытые вопросы |
 | `docs/09-p0-spikes.md` | проверки окружения и история спайков |

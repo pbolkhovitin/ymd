@@ -1,18 +1,20 @@
 # AGENTS.md — контекст проекта
 
-Клиент Яндекс Музыки для **KDE Plasma 6**: плазмоид в панели, приложение
-`ymd-qt` на Qt/Kirigami + Rust-демон `ymd`.
-Этап: **KDE-порт и Qt-приложение готовы** (демон, плазмоид, окно, .deb, документация).
+Клиент Яндекс Музыки для **KDE Plasma 6** и **Noctalia**: плазмоид в панели,
+приложение `ymd-qt` на Qt/Kirigami, плагин Noctalia (Luau) + Rust-демон `ymd`.
+Этап: **KDE-порт и Qt-приложение готовы**; плагин Noctalia сведён с KDE-веткой
+в один репозиторий (каталог `noctalia/`).
 
 ## Читать в этом порядке
 
 1. `README.md` — обзор, установка, статус.
 2. `docs/01-concept.md` — зачем и как выглядит.
-3. `docs/02-architecture.md` — компоненты и IPC-контракт.
+3. `docs/02-architecture.md` — компоненты и IPC-контракт (общий для всех клиентов).
 4. `docs/03-kde-plasmoid.md` / `docs/04-daemon.md` — детали слоёв.
 5. `docs/11-qt-app.md` — отдельное приложение.
-6. `docs/07-roadmap.md` — что дальше.
-7. `notes/kde-port-findings.md` — факты порта и грабли.
+6. `docs/design/ui-rules.md` → `docs/design/plasma.md` / `docs/design/noctalia.md`.
+7. `docs/07-roadmap.md` — что дальше.
+8. `notes/kde-port-findings.md` — факты порта и грабли; `notes/design-audit.md` — аудит панели Noctalia.
 
 ## Состояние кода
 
@@ -34,6 +36,11 @@
 | `app/src/ymdclient.{h,cpp}` | HTTP-клиент приложения: ключ, polling, команды, поиск | готов |
 | `app/src/tray.{h,cpp}` | трей: окно, play/pause, next/prev, выход | готов |
 | `app/qml/Main.qml` | окно `ymd-qt`: обложка, seek, транспорт, поиск, очередь | готов |
+| `noctalia/lib/ymd.luau` | HTTP-клиент демона: ключ, GET, cmd, SSE | готов |
+| `noctalia/widget.luau` | бар-виджет: иконка + «трек — артист», клики и колесо | готов |
+| `noctalia/panel.luau` | панель Noctalia: шапка, прогресс, транспорт, поиск, очередь | готов |
+| `noctalia/bridge.luau` | фоновая SSE-подписка | готов |
+| `scripts/install-noctalia.sh` | симлинк плагина в Noctalia + reload | готов |
 | `packaging/` | Docker, `.deb`, systemd unit | готов |
 | `scripts/` | сборка, установка, проверки | готов |
 
@@ -80,14 +87,20 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 ## Правила
 
-- Плазмоид и `ymd-qt` **не** обращаются к API Яндекса и **не** хранят токен —
-  только демон.
+- Плазмоид, `ymd-qt` и плагин Noctalia **не** обращаются к API Яндекса и **не**
+  хранят токен — только демон.
 - В QML нет `#rrggbb`: цвета — `Kirigami.Theme` / `PlasmaComponents3`.
+- В Luau нет `#rrggbb`: цвета — только `noctalia.getColor(role)`.
 - Ноль анимаций по умолчанию: никаких Behavior, marquee, интерполяций.
 - Ключ — только через `ymd session-key` (плазмоид — Plasma5Support executable
-  engine; `ymd-qt` — файл ключа или `QProcess`), без `sh -c`.
+  engine; `ymd-qt` — файл ключа или `QProcess`; Noctalia — файл
+  `$XDG_RUNTIME_DIR/ymd/session.key`), без `sh -c`.
 - Сетевые запросы асинхронны; результат — в callback, не в `Component.onCompleted`.
 - Плазмоид не пишет в свой каталог; обложки грузятся по URL.
+- Плагин Noctalia пишет только в `pluginDataDir()`, не в `pluginDir()`;
+  `runAsync` — только argv-форма.
+- Корень панели Noctalia — `ui.column({ flexGrow = 1 })`, списки — в
+  `ui.scroll({ flexGrow = 1 })`: без этого контент вылезает за панель.
 - `ymd-qt` не дублирует `format.js`: копия должна совпадать с
   `plasmoid/contents/ui/format.js` (`cmp`).
 - Факт попадает в `docs/` только после проверки; иначе — в `notes/`.
