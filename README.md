@@ -4,8 +4,9 @@
 [![release](https://img.shields.io/github/v/release/pbolkhovitin/ymd?label=release)](https://github.com/pbolkhovitin/ymd/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Клиент **Яндекс Музыки** для **KDE Plasma 6** и **Noctalia** (niri): плазмоид
-в панели, отдельное приложение на Qt/Kirigami, плагин для бара Noctalia и
+Клиент **Яндекс Музыки** для **KDE Plasma 6**, **Noctalia** (niri) и **macOS**
+(Apple Silicon): плазмоид в панели, отдельное приложение на Qt/Kirigami,
+плагин для бара Noctalia, самостоятельное приложение в строке меню macOS и
 Rust-демон `ymd`. Без Electron, без анимаций по умолчанию, с нативным PipeWire
 и MPRIS.
 
@@ -23,6 +24,7 @@ Rust-демон `ymd`. Без Electron, без анимаций по умолч�
 | `plasma-widget-ymd` | компактный виджет в панели и попап: поиск, очередь, транспорт, режимы | QML / Plasma 6 |
 | `ymd-qt` | отдельное окно + трей: те же поиск, очередь, транспорт, режимы | Qt 6 / Kirigami |
 | `yandex-music` (Noctalia) | бар-виджет (подпись «ymd» или трек) и панель: поиск, очередь, транспорт, перемотка, громкость | Luau, plugin_api 35 |
+| `ymd-menubar` (macOS) | строка меню: трек, обложка, транспорт, лайк, «Моя волна»; демон и GStreamer внутри `.app` | SwiftUI, macOS 13+ arm64 |
 
 Плазмоид, `ymd-qt` и плагин Noctalia не знают токен и не обращаются к API
 Яндекса. Они общаются только с локальным HTTP API `127.0.0.1:8765`; ключ
