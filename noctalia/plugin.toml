@@ -1,11 +1,11 @@
 id = "pbolkhovitin/yandex-music"
-name = "Yandex Music"
+name = "ymd"
 version = "0.3.0"
 plugin_api = 35
 author = "pbolkhovitin"
 license = "MIT"
 icon = "music"
-description = "Яндекс Музыка в баре и панели Noctalia через демон ymd."
+description = "Неофициальный клиент Яндекс Музыки: бар-виджет и панель Noctalia через демон ymd."
 tags = ["music", "media", "yandex"]
 
 # Бар-виджет: иконка + подпись, клики и колесо.
