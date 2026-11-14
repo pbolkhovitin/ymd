@@ -144,8 +144,15 @@ noctalia msg plugins list                 # должен появиться pbol
 ## Релизы и версии
 
 Готовые пакеты и заметки — в [Releases](https://github.com/pbolkhovitin/ymd/releases).
-Релиз ставится тегом `vX.Y.Z` из `main`; CI собирает `.deb` и `.rpm` демона,
-плазмоида и `ymd-qt`, архив плагина Noctalia и создаёт GitHub Release.
+Релиз идёт через release-PR с версией и `CHANGELOG.md`, затем workflow
+проверяет тег, гоняет тесты, собирает `.deb`/`.rpm` и архив плагина и
+создаёт GitHub Release после ручного approve:
+
+```bash
+bash scripts/release.sh prepare minor       # версия + CHANGELOG + PR
+bash scripts/release.sh publish vX.Y.Z      # dry-run
+bash scripts/release.sh publish vX.Y.Z --yes    # тег + Release после approve
+```
 
 Одна версия на весь проект, источник истины — `Cargo.toml`:
 

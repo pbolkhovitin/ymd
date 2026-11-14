@@ -104,6 +104,39 @@ fi
 file_count=$(printf '%s\n' "$files" | grep -c . || true)
 say "pr-check: база $base, изменено файлов: $file_count"
 
+# --- release PR ------------------------------------------------------------
+# Релизный PR неизбежно меняет noctalia/ и plasmoid|app/ (версии в
+# манифестах) и не добавляет пункт в [Unreleased], а переносит его в
+# раздел версии. Для заголовка chore(release): X.Y.Z действуют отдельные
+# правила: только файлы релиза и непустой раздел новой версии.
+
+release_pr=0
+release_version=""
+if [ -n "$title" ] \
+    && printf '%s' "$title" | grep -Eq '^chore\(release\): [0-9]+\.[0-9]+\.[0-9]+$'; then
+  release_version="${title#chore(release): }"
+  if [ "$file_count" -gt 0 ]; then
+    release_files_ok=1
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      case "$path" in
+        CHANGELOG.md|Cargo.toml|Cargo.lock|noctalia/plugin.toml|plasmoid/metadata.json|app/CMakeLists.txt)
+          ;;
+        *)
+          release_files_ok=0
+          break
+          ;;
+      esac
+    done <<<"$files"
+    if [ "$release_files_ok" -eq 1 ]; then
+      release_pr=1
+      ok "release PR: только манифесты версий и CHANGELOG"
+    else
+      note "заголовок chore(release), но в diff есть посторонние файлы — действуют обычные правила"
+    fi
+  fi
+fi
+
 # --- тело PR ---------------------------------------------------------------
 
 body=""
@@ -214,8 +247,9 @@ else
     fail "раздел «Как проверить» пустой — команды и ожидаемый результат"
   fi
 
-  # Галочки должны соответствовать каталогам в diff.
-  if has_section "Клиент" && [ "$file_count" -gt 0 ]; then
+  # Галочки должны соответствовать каталогам в diff. У release-PR
+  # манифесты всех клиентов, поэтому сверка с каталогами не применяется.
+  if has_section "Клиент" && [ "$file_count" -gt 0 ] && [ "$release_pr" -eq 0 ]; then
     check_client() {
       printf '%s\n' "$client" \
         | grep -E '^[[:space:]]*-[[:space:]]*\[[xX]\]' \
@@ -268,7 +302,24 @@ count_unreleased() {
   '
 }
 
-if [ -n "$code_dirs" ]; then
+if [ "$release_pr" -eq 1 ]; then
+  if ! printf '%s\n' "$files" | grep -qx 'CHANGELOG.md'; then
+    fail "release PR: CHANGELOG.md не изменён"
+  else
+    head_section=$(git show "HEAD:CHANGELOG.md" 2>/dev/null | awk -v v="$release_version" '
+      index($0, "## [" v "]") == 1 { inside = 1; next }
+      inside && /^## \[/ { exit }
+      inside && /^- / { n++ }
+      END { print n + 0 }
+    ')
+    head_unreleased=$(count_unreleased HEAD)
+    if [ "${head_section:-0}" -gt 0 ] && [ "${head_unreleased:-0}" -eq 0 ]; then
+      ok "release PR: раздел $release_version заполнен, [Unreleased] пуст"
+    else
+      fail "release PR: нужен непустой раздел [$release_version] и пустой [Unreleased] (сейчас $release_version: ${head_section:-0}, Unreleased: ${head_unreleased:-0})"
+    fi
+  fi
+elif [ -n "$code_dirs" ]; then
   if ! printf '%s\n' "$files" | grep -qx 'CHANGELOG.md'; then
     fail "изменён код ($code_dirs), а CHANGELOG.md — нет"
   else

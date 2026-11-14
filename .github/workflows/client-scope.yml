@@ -18,9 +18,25 @@ jobs:
       - name: Проверить, что PR не трогает оба клиента
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -u
           files=$(git diff --name-only "$BASE...HEAD")
+
+          # Release-PR меняет версии во всех манифестах и CHANGELOG.
+          if printf '%s' "$PR_TITLE" \
+              | grep -Eq '^chore\(release\): [0-9]+\.[0-9]+\.[0-9]+$'; then
+            extra=$(printf '%s\n' "$files" \
+              | grep -vE '^(CHANGELOG\.md|Cargo\.toml|Cargo\.lock|noctalia/plugin\.toml|plasmoid/metadata\.json|app/CMakeLists\.txt)$' \
+              || true)
+            if [ -z "$extra" ]; then
+              echo "release PR: только версии и CHANGELOG — область однородна"
+              exit 0
+            fi
+            echo "release PR содержит посторонние файлы — проверяю как обычный PR:"
+            printf '%s\n' "$extra" | sed 's/^/  /'
+          fi
+
           noctalia=$(printf '%s\n' "$files" | grep -c '^noctalia/' || true)
           kde=$(printf '%s\n' "$files" | grep -cE '^(plasmoid|app)/' || true)
           printf 'noctalia: %s файлов, kde: %s файлов\n' "$noctalia" "$kde"

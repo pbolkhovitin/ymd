@@ -28,6 +28,7 @@ version = "0.2.1"
 bash scripts/version.sh            # напечатать текущую
 bash scripts/version.sh --check    # сверить все четыре манифеста
 bash scripts/version.sh --set 0.3.0
+bash scripts/version.sh --next minor   # напечатать 0.3.0, ничего не менять
 bash scripts/version.sh --bump patch   # 0.2.1 -> 0.2.2
 bash scripts/version.sh --tag          # аннотированный тег v0.2.2
 ```
@@ -50,50 +51,90 @@ bash scripts/version.sh --tag          # аннотированный тег v0.
 
 ## Порядок выпуска
 
-1. Обновить `CHANGELOG.md`: перенести пункты из `[Unreleased]` в будущий
-   раздел (это делает `--set`/`--bump` автоматически, остаётся дописать
-   содержимое).
-2. Поднять версию:
+Релиз идёт двумя шагами: **release-PR** с версией и CHANGELOG, затем
+**публикация** workflow с ручным approve. Тег вручную не ставится — его
+создаёт `release.yml` после проверок и сборки.
 
-   ```bash
-   bash scripts/version.sh --bump minor   # создаст раздел в CHANGELOG
-   ```
-
-3. Проверить локально:
-
-   ```bash
-   bash scripts/docs-check.sh
-   bash packaging/run-tests.sh -p ymd
-   cargo build --release -p ymd && ./target/release/ymd --version
-   ```
-
-4. Закоммитить и запушить `main`:
-
-   ```bash
-   git add -A
-   git commit -m "chore(release): 0.3.0"
-   git push origin main
-   ```
-
-5. Поставить тег и запушить его:
-
-   ```bash
-   bash scripts/version.sh --tag
-   git push origin v0.3.0
-   ```
-
-6. Дождаться workflow **release**: он проверит `тег = версия`, прогонит
-   тесты, соберёт `ymd_*.deb`/`*.rpm`, `plasma-widget-ymd_*.deb`/`*.rpm`,
-   `ymd-qt_*.deb`/`*.rpm` и `yandex-music-plugin-*.tar.gz`, создаст
-   GitHub Release с заметками из `CHANGELOG.md` и приложит файлы.
-   macOS-артефакты (`.dmg`, tar.gz демона) добавляются отдельно:
-   `gh workflow run macos-release.yml -f tag=vX.Y.Z`.
-
-Если workflow упал, тег можно удалить и повторить:
+### 1. Подготовить release-PR
 
 ```bash
-git tag -d v0.3.0 && git push origin :refs/tags/v0.3.0
+bash scripts/release.sh prepare minor
 ```
+
+Скрипт проверяет чистый `main`, поднимает версию (`--bump`), переносит
+`[Unreleased]` в раздел новой версии, прогоняет `docs-check` и `pr-check`,
+создаёт ветку `release/vX.Y.Z`, коммит `chore(release): X.Y.Z` и PR.
+`client-scope` и `pr-check` распознают такой PR по заголовку: разрешены
+только манифесты версий и `CHANGELOG.md`, а вместо нового пункта в
+`[Unreleased]` требуется непустой раздел `## [X.Y.Z]` и пустой
+`[Unreleased]`.
+
+### 2. Ревью и merge
+
+Release-PR проходит обычные проверки (`scope`, `author`, `policy`,
+`версии`, `документация`, тесты) и ревью. Версия попадает в `main` только
+через PR; squash-merge даёт коммит `chore(release): X.Y.Z (#N)`.
+
+### 3. Dry-run
+
+```bash
+bash scripts/release.sh publish vX.Y.Z
+```
+
+Запускает `release.yml` с `dry_run=true`: verify, тесты Docker и сборка
+пакетов. Тег и GitHub Release **не** создаются.
+
+### 4. Публикация
+
+```bash
+bash scripts/release.sh publish vX.Y.Z --yes
+```
+
+Workflow останавливается на environment **`release`** (required reviewer).
+После approve он:
+
+1. создаёт аннотированный тег `vX.Y.Z` на проверенном SHA;
+2. создаёт GitHub Release с заметками из `CHANGELOG.md`;
+3. прикладывает `.deb`, `.rpm` и архив плагина Noctalia.
+
+Тег создаётся **только после** успешных verify/test/build и approve.
+Повторный запуск с тем же тегом и SHA обновляет релиз (`--clobber`).
+
+### 5. macOS
+
+```bash
+gh workflow run macos-release.yml -f tag=vX.Y.Z
+```
+
+macOS-раннер дорогой, поэтому `.dmg` и tar.gz демона arm64 добавляются
+отдельным ручным workflow.
+
+### Аварийный путь
+
+Если Actions недоступны, релиз можно выпустить вручную с правами
+администратора:
+
+```bash
+bash scripts/version.sh --bump patch
+git commit -am "chore(release): X.Y.Z" && git push origin main
+bash scripts/version.sh --tag && git push origin vX.Y.Z
+```
+
+В обычном процессе так делать не нужно: тег не пройдёт проверку
+`release.yml`, если `HEAD` — не релизный коммит.
+
+### Настройка репозитория (один раз)
+
+- **Environment `release`** — required reviewer (мейнтейнер), self-review
+  разрешён; job `publish` не начнётся без approve.
+- **Ruleset на `refs/tags/v*`** — запрещает удаление и перезапись тегов;
+  создание нового тега workflow разрешено. Администратор может обойти
+  ruleset в аварийной ситуации.
+- **Branch protection `main`** — обязательные проверки `scope`, `author`,
+  `policy`; одно одобрение ревью; squash-only.
+
+Без environment с ревьюером GitHub создаст его автоматически без защиты,
+поэтому настройку нужно проверить до первого релиза.
 
 ## Что видит пользователь
 
@@ -118,10 +159,21 @@ git tag -d v0.3.0 && git push origin :refs/tags/v0.3.0
 | Workflow | Когда | Что делает |
 |---|---|---|
 | `ci.yml` | push в `main`, PR; вручную | версии, `docs-check`, `cargo test` в Docker, архив плагина; при ручном запуске — ещё `.rpm` |
-| `release.yml` | тег `v*` | версия = тег, тесты, `.deb`/`.rpm` + архив, GitHub Release |
+| `release.yml` | вручную `workflow_dispatch` или тег `v*` | verify, тесты, `.deb`/`.rpm` + архив, approve `release`, тег и GitHub Release |
 | `macos-release.yml` | вручную | macOS: демон arm64 + `.dmg`, прикладывает к релизу (`.dmg` в Linux не собрать) |
-| `client-scope.yml` | PR | один PR — один клиент |
+| `client-scope.yml` | PR | один PR — один клиент; release-PR — только манифесты и CHANGELOG |
 | `commit-identity.yml` | PR | автор коммитов — участник проекта |
+| `pr-policy.yml` | PR | заголовок, шаблон, клиенты, пункт в `CHANGELOG.md` |
+
+Проверить релиз без публикации:
+
+```bash
+bash scripts/release.sh publish vX.Y.Z          # workflow dry_run=true
+```
+
+`release.yml` при ручном запуске требует, чтобы `HEAD` совпадал с
+`origin/main`, а `HEAD` был релизным коммитом. Поэтому релиз нельзя
+собрать с боковой ветки или вместе с незамерженными изменениями.
 
 Проверить упаковку, не выпуская тег:
 

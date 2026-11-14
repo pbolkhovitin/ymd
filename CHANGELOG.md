@@ -16,6 +16,11 @@
 
 ### Добавлено
 
+- Контролируемый релиз: `scripts/release.sh` (`prepare`, `check`, `publish`,
+  `status`) готовит release-PR и запускает `release.yml`; тег и GitHub Release
+  создаются только после тестов, сборки и approve environment `release`.
+  Release-PR меняет только манифесты версий и `CHANGELOG.md`; `version.sh`
+  получил `--next`.
 - CI `pr-policy` и `scripts/pr-check.sh`: проверяют оформление PR — заголовок
   в стиле Conventional Commits, разделы шаблона, соответствие галочек «Клиент»
   диффу и новый пункт в `CHANGELOG.md` при правках кода. В шаблон PR добавлен

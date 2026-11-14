@@ -4,6 +4,7 @@
 #   bash scripts/version.sh              # напечатать текущую версию
 #   bash scripts/version.sh --check      # сверить все манифесты (CI, docs-check)
 #   bash scripts/version.sh --set 0.3.0  # записать версию во все манифесты
+#   bash scripts/version.sh --next minor # 0.2.1 -> 0.3.0 (только напечатать)
 #   bash scripts/version.sh --bump patch # 0.2.0 -> 0.2.1 (и запись во все)
 #   bash scripts/version.sh --tag        # аннотированный тег v<version>
 #   bash scripts/version.sh --check-tag v0.2.1
@@ -140,7 +141,7 @@ note_changelog() {
   printf 'CHANGELOG.md: добавлен раздел %s\n' "$version"
 }
 
-bump() {
+next_version() {
   local part="$1" old major minor patch
   old=$(current)
   IFS=. read -r major minor patch <<<"$old"
@@ -150,7 +151,13 @@ bump() {
     patch) patch=$((patch + 1)) ;;
     *) die "ожидалось major|minor|patch, получено: $part" ;;
   esac
-  set_version "$major.$minor.$patch"
+  printf '%s\n' "$major.$minor.$patch"
+}
+
+bump() {
+  local part="$1" new
+  new=$(next_version "$part")
+  set_version "$new"
 }
 
 tag() {
@@ -187,6 +194,10 @@ case "${1:-}" in
     [ $# -eq 2 ] || die "использование: $0 --set MAJOR.MINOR.PATCH"
     set_version "$2"
     ;;
+  --next)
+    [ $# -eq 2 ] || die "использование: $0 --next major|minor|patch"
+    next_version "$2"
+    ;;
   --bump)
     [ $# -eq 2 ] || die "использование: $0 --bump major|minor|patch"
     bump "$2"
@@ -198,7 +209,7 @@ case "${1:-}" in
     check_tag "${2:-}"
     ;;
   -h|--help)
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     die "неизвестный аргумент: $1 (см. --help)"
