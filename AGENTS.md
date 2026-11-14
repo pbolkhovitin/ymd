@@ -46,6 +46,8 @@
 | `noctalia/bridge.luau` | фоновая SSE-подписка | готов |
 | `scripts/install-noctalia.sh` | симлинк плагина в Noctalia + reload | готов |
 | `scripts/version.sh` | версии: `--check`, `--next`, `--bump`, `--tag` | готов |
+| `scripts/version-impact.sh` | major/minor/patch по коммитам и diff контракта | готов |
+| `scripts/docs-sync.sh` | генерация справочников маршрутов и полей состояния | готов |
 | `scripts/release.sh` | релиз: `prepare`, `check`, `publish`, `status` | готов |
 | `macos/` | самостоятельный `ymd-menubar` (SwiftUI), встроенный демон/runtime, Device Flow, «Моя волна», target macOS 13 arm64 | готов; запуск проверен на 27.2.1 |
 | `packaging/` | Docker, `.deb`, `.rpm`, systemd unit | готов |
@@ -116,7 +118,9 @@ gh workflow run macos-release.yml -f tag=vX.Y.Z
 3. `notes/<тема>-findings.md` — что проверено живьём, цифры, грабли.
 4. `AGENTS.md` — таблица состояния и «Следующий шаг».
 5. `docs/07-roadmap.md` — статус этапа.
-6. `bash scripts/docs-check.sh` — должен выдать `ok`. Проверяет: маркеры
+6. `bash scripts/docs-check.sh` — должен выдать `ok`, плюс
+   `bash scripts/docs-sync.sh --check` (справочники контракта) и
+   `bash scripts/version-impact.sh` (какая цифра версии следует). Проверяет: маркеры
    устаревания, отставание доков от **исходников** (`daemon`, `plasmoid`,
    `app`, `noctalia`; изменения в `packaging`, `scripts`, `.github` —
    подсказка, не блокер), модули без упоминания, **каждый

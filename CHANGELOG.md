@@ -18,6 +18,11 @@
 
 ### Добавлено
 
+- Автоматизация документации и версий: `scripts/docs-sync.sh` генерирует
+  справочники маршрутов `/v1/*` и полей состояния, `scripts/version-impact.sh`
+  считает по коммитам и diff, какая цифра версии следует (major/minor/patch),
+  `scripts/release.sh prepare auto` берёт bump из этого отчёта. В CI добавлены
+  `docs-sync.sh --check` и сводка влияния на версию в Summary.
 - Кодекс поведения участника (`CODE_OF_CONDUCT.md`, Contributor Covenant 2.1):
   порядок приватного сообщения о нарушении и меры; ссылки из `README.md`
   и `CONTRIBUTING.md`. Заполняет пункт Code of conduct в Community Standards.

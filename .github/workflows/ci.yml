@@ -44,6 +44,10 @@ jobs:
           fetch-depth: 0 # docs-check сравнивает время коммитов кода и доков
       - name: docs-check
         run: bash scripts/docs-check.sh
+      - name: справочники (маршруты и состояние)
+        run: bash scripts/docs-sync.sh --check
+      - name: влияние на версию
+        run: bash scripts/version-impact.sh >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: тесты (Docker)
