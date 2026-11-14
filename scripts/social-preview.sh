@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 src="docs/images/noctalia-panel.png"
 out="docs/images/social-preview.png"
+ver="$(bash scripts/version.sh)"
 tmp="/tmp/opencode/social"
 mkdir -p "$tmp"
 
@@ -34,13 +35,14 @@ magick "$tmp/stage.png" \
   -background none -fill '#f2f5fa' -font "Inter" -pointsize 168 \
   -annotate +76+268 'ymd' \
   -fill '#a78bfa' -draw 'roundrectangle 82,330 202,338,4,4' \
-  -fill '#d7deea' -font "Inter" -pointsize 38 \
-  -annotate +80+372 'Клиент Яндекс Музыки' \
-  -fill '#8e9ab0' -pointsize 27 \
-  -annotate +80+428 'KDE Plasma 6 · niri · Noctalia' \
-  -annotate +80+474 'Rust-демон · GStreamer · MPRIS' \
+  -fill '#d7deea' -font "Inter" -pointsize 30 \
+  -annotate +80+368 'Яндекс Музыка для Linux и macOS' \
+  -fill '#8e9ab0' -pointsize 26 \
+  -annotate +80+420 'KDE Plasma 6 · niri · Noctalia' \
+  -annotate +80+456 'macOS Apple Silicon · меню-бар' \
+  -annotate +80+492 'Rust-демон · GStreamer · MPRIS' \
   -fill '#6f7b90' -pointsize 22 \
-  -annotate +80+566 'github.com/pbolkhovitin/ymd' \
+  -annotate +80+570 "github.com/pbolkhovitin/ymd · v${ver}" \
   -depth 8 -strip "$out"
 
 identify "$out"

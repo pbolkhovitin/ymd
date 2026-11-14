@@ -15,6 +15,12 @@
   порядок приватного сообщения о нарушении и меры; ссылки из `README.md`
   и `CONTRIBUTING.md`. Заполняет пункт Code of conduct в Community Standards.
 
+### Изменено
+
+- Social preview пересобран под текущий состав: «Яндекс Музыка для Linux
+  и macOS», строка про macOS Apple Silicon, номер версии берётся из
+  `scripts/version.sh`.
+
 ## [0.3.0] - 2026-11-15
 
 ### Изменено
