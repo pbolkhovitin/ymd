@@ -7,8 +7,34 @@ final class AppModel: ObservableObject {
     @Published private(set) var errorText: String?
     @Published private(set) var busy = false
 
-    private let api = APIClient()
+    @Published private(set) var connection: DaemonSupervisor.Phase = .stopped
+    @Published private(set) var account: Account?
+    @Published private(set) var auth: DeviceAuth?
+    @Published private(set) var authBusy = false
+    @Published private(set) var authCancelling = false
+    @Published private(set) var authError: String?
+    private let api: APIClient
+    private let supervisor: DaemonSupervisor
+    private var startup: Task<Void, Never>?
+    private var startupGeneration = UUID()
+    private var authTask: Task<Void, Never>?
+    private var refreshing = false
+    private var connectionGeneration = UUID()
+    private var started = false
+    private var terminationObserver: NSObjectProtocol?
+
     private var timer: Timer?
+
+    init(api: APIClient = APIClient(), supervisor: DaemonSupervisor? = nil) {
+        self.api = api
+        self.supervisor = supervisor ?? DaemonSupervisor { await api.probe() }
+        self.supervisor.onChange = { [weak self] phase in
+            self?.connectionGeneration = UUID()
+            self?.connection = phase
+            if phase != .ready { self?.timer?.invalidate(); self?.timer = nil }
+            if case .failed(let message) = phase { self?.errorText = message }
+        }
+    }
 
     var iconName: String {
         switch state?.status {
@@ -39,13 +65,132 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
-        Task { await refresh() }
-        schedule()
+        guard !started else { return }
+        started = true
+        terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
+        connect()
+    }
+
+    func connect() {
+        guard startup == nil else { return }
+        let attempt = UUID()
+        startupGeneration = attempt
+        startup = Task {
+            defer { if startupGeneration == attempt { startup = nil } }
+            await supervisor.start()
+            guard startupGeneration == attempt, !Task.isCancelled, connection == .ready else { return }
+            let generation = connectionGeneration
+            await refresh()
+            await refreshAccount()
+            guard startupGeneration == attempt, connection == .ready, connectionGeneration == generation else { return }
+            schedule()
+        }
     }
 
     func stop() {
+        startupGeneration = UUID()
+        startup?.cancel()
+        startup = nil
+        authTask?.cancel()
+        authTask = nil
         timer?.invalidate()
         timer = nil
+        supervisor.stop()
+    }
+
+    func refreshAccount() async {
+        guard connection == .ready else { return }
+        let generation = connectionGeneration
+        do {
+            let fresh = try await api.account()
+            guard connection == .ready, connectionGeneration == generation else { return }
+            account = fresh
+        } catch {
+            guard connection == .ready, connectionGeneration == generation else { return }
+            errorText = error.localizedDescription
+            if (error as? URLError)?.code == .cannotConnectToHost { supervisor.connectionLost() }
+        }
+    }
+
+    func login() {
+        guard authTask == nil, account == nil else { return }
+        authError = nil
+        authCancelling = false
+        authBusy = true
+        authTask = Task {
+            defer { authBusy = false; authCancelling = false; authTask = nil }
+            do {
+                let flow: DeviceAuth
+                do { flow = try await api.deviceAuth(method: "POST") }
+                catch APIError.http(409) { flow = try await api.deviceAuth() }
+                try Task.checkCancellation()
+                if authCancelling {
+                    _ = try await api.deviceAuth(method: "DELETE")
+                    return
+                }
+                auth = flow
+                if flow.state == "pending" {
+                    guard let url = DeviceAuth.browserURL(flow.url) else { throw APIError.badReply }
+                    NSWorkspace.shared.open(url)
+                }
+                let deadline = Date().addingTimeInterval(TimeInterval(max(1, flow.expiresIn)))
+                while !Task.isCancelled {
+                    guard Date() < deadline else {
+                        authError = "Срок действия кода истёк. Начните вход заново."
+                        auth = nil
+                        return
+                    }
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    if authCancelling {
+                        _ = try await api.deviceAuth(method: "DELETE")
+                        return
+                    }
+                    let fresh = try await api.deviceAuth()
+                    try Task.checkCancellation()
+                    if authCancelling {
+                        _ = try await api.deviceAuth(method: "DELETE")
+                        return
+                    }
+                    auth = fresh
+                    switch fresh.state {
+                    case "authorized":
+                        auth = nil
+                        await refreshAccount()
+                        await refresh()
+                        return
+                    case "pending": continue
+                    case "expired": authError = "Срок действия кода истёк. Начните вход заново."
+                    case "cancelled", "idle": authError = "Вход отменён."
+                    default: authError = fresh.error ?? "Не удалось войти. Повторите попытку."
+                    }
+                    auth = nil
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                authError = error.localizedDescription
+                auth = nil
+            }
+        }
+    }
+
+    func cancelLogin() {
+        // DELETE отправляется после завершения POST: иначе поздний POST снова начнёт вход.
+        authCancelling = true
+        auth = nil
+    }
+
+    func openLoginPage() {
+        if let value = auth?.url, let url = DeviceAuth.browserURL(value) { NSWorkspace.shared.open(url) }
+    }
+
+    func copyLoginCode() {
+        guard let code = auth?.userCode else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
     }
 
     private func schedule() {
@@ -57,30 +202,45 @@ final class AppModel: ObservableObject {
     }
 
     func reload() {
-        Task { await refresh() }
+        if connection == .ready {
+            Task {
+                await refresh()
+                if connection == .ready { await refreshAccount() }
+                else { connect() }
+            }
+        } else { connect() }
     }
 
-    func refresh() async {        do {
+    func refresh() async {
+        guard !refreshing, connection == .ready else { return }
+        refreshing = true
+        let generation = connectionGeneration
+        defer { refreshing = false }
+        do {
             let fresh = try await api.state()
+            guard connection == .ready, connectionGeneration == generation else { return }
             let wasPlaying = isPlaying
             state = fresh
             errorText = nil
             if wasPlaying != isPlaying { schedule() }
         } catch {
+            guard connection == .ready, connectionGeneration == generation else { return }
             errorText = error.localizedDescription
             if isPlaying { state = nil }
+            if (error as? URLError)?.code == .cannotConnectToHost { supervisor.connectionLost() }
         }
     }
 
     func send(_ op: String, payload: [String: Any]? = nil) {
-        guard !busy else { return }
+        guard !busy, connection == .ready else { return }
         busy = true
+        let generation = connectionGeneration
         Task {
             do {
                 try await api.command(op, payload: payload)
-                await refresh()
+                if connection == .ready, connectionGeneration == generation { await refresh() }
             } catch {
-                errorText = error.localizedDescription
+                if connection == .ready, connectionGeneration == generation { errorText = error.localizedDescription }
             }
             busy = false
         }
@@ -102,6 +262,7 @@ final class AppModel: ObservableObject {
     }
 
     func quit() {
+        stop()
         NSApplication.shared.terminate(nil)
     }
 }

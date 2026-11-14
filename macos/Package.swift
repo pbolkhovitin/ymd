@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "ymd-menubar",
             path: "Sources/ymd-menubar"
-        )
+        ),
+        .testTarget(name: "YmdMenuBarTests", dependencies: ["ymd-menubar"], path: "Tests/YmdMenuBarTests")
     ]
 )

@@ -46,7 +46,7 @@
 | `noctalia/bridge.luau` | фоновая SSE-подписка | готов |
 | `scripts/install-noctalia.sh` | симлинк плагина в Noctalia + reload | готов |
 | `scripts/version.sh` | версии: `--check`, `--bump`, `--tag` | готов |
-| `macos/` | `ymd-menubar` (SwiftUI), `build-dmg.sh`, сборка демона под Apple Silicon | готов |
+| `macos/` | самостоятельный `ymd-menubar` (SwiftUI), встроенный демон/runtime, Device Flow, «Моя волна», target macOS 13 arm64 | готов; запуск проверен на 27.2.1 |
 | `packaging/` | Docker, `.deb`, `.rpm`, systemd unit | готов |
 | `scripts/` | сборка, установка, проверки | готов |
 | `.github/workflows/ci.yml` | версии, доки, тесты, архив плагина; ручной прогон `.rpm` | готов |
@@ -193,6 +193,12 @@ API Яндекса в клиентах, зелёные `docs-check` и `pr-check
 каталога из `CODEOWNERS`.
 
 ## Следующий шаг
+
+Самостоятельная сборка macOS: `LC_ALL=C bash macos/build.sh`,
+`bash macos/build-dmg.sh --no-build`; официальный GStreamer 1.28.8 в
+`packaging/.cache/`, без глобальной установки framework. Все вложенные
+Mach-O проверяются на arm64 и минимум не выше 13.0. Нужна живая проверка
+на Ventura; результаты текущего хоста — `notes/macos-standalone-findings.md`.
 
 1. **Бар Noctalia**: артист теряется (хост режет ~22 символа), play/pause
    неразличимы (статичный глиф). Переподключение после рестарта демона

@@ -23,7 +23,28 @@
 Итог: на Mac получается headless-демон с полноценным API, управляемый из
 терминала или любым HTTP-клиентом.
 
-## Требования
+## Самостоятельное приложение из DMG
+
+Целевая система — macOS 13 Ventura+ на Apple Silicon. Приложение включает
+демон и GStreamer: перенесите `ymd-menubar.app` в «Программы», откройте его,
+нажмите «Войти в Яндекс Музыку», введите показанный код на странице Яндекса
+и включите «Мою волну». При сохранённом входе повторная авторизация не нужна.
+Homebrew, Rust и терминал пользователю готового приложения не требуются.
+
+Клиент проверяет существующий демон на порту 8765 и подключается к нему.
+Если демона нет, запускает свой `Contents/Helpers/ymd` и ждёт готовности.
+При выходе завершается только собственный процесс. Ошибка старта, падение
+или конфликт порта показываются в попапе; доступно повторное подключение.
+Ключ и данные аккаунта остаются в прежнем пользовательском каталоге,
+OAuth-токен хранится только у демона в Keychain.
+
+Проверены сборка и запуск на macOS 27.2.1 arm64. Упаковщик проверяет
+минимальную macOS **каждого** вложенного Mach-O, включая клиент, и
+отказывается собирать пакет, если любой из них требует систему новее 13.0.
+Запуск непосредственно на Ventura ещё не проверен; журнал проверок —
+`notes/macos-standalone-findings.md`.
+
+## Требования для разработки демона через Homebrew
 
 - macOS 13+ на Apple Silicon (`arm64`).
 - Xcode Command Line Tools: `xcode-select --install`.
@@ -139,14 +160,14 @@ launchctl list | grep ymd
 
 ## Меню-бар клиент (`ymd-menubar`)
 
-Маленькое SwiftUI-приложение: иконка в строке меню, по клику — попап с
-обложкой, треком, прогрессом, транспортом, повтором и shuffle. Работает через
-тот же локальный API, что плазмоид и `ymd-qt`, поэтому демон должен быть
-запущен (`ymd serve`).
+SwiftUI-приложение: иконка в строке меню, по клику — попап с обложкой,
+треком, прогрессом, транспортом, повтором, shuffle, входом и «Моей волной».
+Общается с демоном по прежнему локальному API; при необходимости запускает
+его из собственного bundle.
 
 ```bash
-bash macos/build.sh              # dist/ymd-menubar.app
-bash macos/build.sh --install    # + ~/Applications
+LC_ALL=C bash macos/build.sh              # dist/ymd-menubar.app
+LC_ALL=C bash macos/build.sh --install    # + ~/Applications
 open ~/Applications/ymd-menubar.app
 ```
 
@@ -155,11 +176,52 @@ open ~/Applications/ymd-menubar.app
 возникала при разборе `$version` перед многоточием в UTF-8-локали.
 
 Приложение появляется только в строке меню. Пока нет активного трека,
-панель показывает «Ничего не играет»; после входа через `ymd auth login`
-волну можно включить командой `ymd wave` в другом терминале.
+панель показывает «Ничего не играет» и позволяет войти в аккаунт и
+запустить «Мою волну».
 Логи демона находятся в `~/.local/state/ymd/ymd.log` (`ymd logs`);
 SwiftUI-клиент отдельный файл логов не пишет. Сообщения внешнего сканера
 GStreamer в stderr могут отсутствовать в файле лога демона.
+
+Вывод встроенного демона дополнительно сохраняется в
+`~/Library/Application Support/ymd/logs/bundled-daemon.log`.
+
+### Как собирается самостоятельный bundle
+
+Для сборки нужны Xcode Command Line Tools, Rust, Python 3.9+ и `pkg-config`
+(`brew install pkgconf`). Скрипт `macos/prepare-runtime.py` скачивает
+официальный runtime GStreamer 1.28.8, проверяет зафиксированный SHA-256
+и распаковывает его в `packaging/.cache/gstreamer-macos/`. Установщик `.pkg`
+не запускается; framework глобально не устанавливается. Для Rust FFI
+генерируются метаданные pkg-config: C-заголовки и большой devel-пакет не
+нужны. Этот приватный SDK не смешивается с GStreamer из Homebrew.
+
+Демон собирается отдельно в `target/macos13/` с
+`MACOSX_DEPLOYMENT_TARGET=13.0`. `macos/bundle-runtime.py` выбирает
+аудиоплагины, GIO OpenSSL, CA-сертификаты и транзитивные dylib, оставляет
+только arm64 и переписывает зависимости на `@loader_path` внутри `.app`.
+`libsoup` включается явно: плагин загружает его динамически по имени.
+Для HTTPS macOS-ветка `daemon/src/player.rs` передаёт базу сертификатов
+`YMD_CA_BUNDLE` в свойство `tls-database` источника GStreamer. Проверка
+сертификатов остаётся включённой; `gio` добавлен только для macOS.
+
+`macos/sign-app.sh` подписывает вложенные Mach-O перед подписью приложения.
+Лицензия runtime и сведения об исходниках находятся в
+`Contents/Resources/ThirdPartyLicenses/`. Сборщик может указать
+`YMD_APP_OUTPUT=/путь/ymd-menubar.app`, чтобы собрать отдельный экземпляр.
+
+Проверки:
+
+```bash
+python3 -m unittest discover -s macos/Tests -p 'test_*.py' -v
+bash macos/Tests/run-standalone-checks.sh
+python3 macos/Tests/check-runtime.py dist/ymd-menubar.app --https https://example.com/
+```
+
+Последняя команда проверяет звук и TLS в копии приложения, запрещая чтение
+`/opt/homebrew` и `/usr/local`; отсутствие вложенных библиотек не исправляет.
+Также проверяется отклонение недоверенного сертификата. При полном Xcode
+доступны XCTest-тесты: `swift test --package-path macos`; на проверенном
+хосте только CLT, поэтому выполнены проверки через `swiftc`.
 
 Автозапуск: System Settings → General → Login Items → «+» →
 `ymd-menubar.app`. `LSUIElement=true` в `Info.plist` — иконки в Dock нет.
@@ -192,6 +254,8 @@ gh workflow run macos-release.yml -f tag=v0.3.0   # то же в CI, если е
 | `APIClient.swift` | `/v1/state`, `/v1/cmd`, чтение ключа |
 | `AppModel.swift` | опрос (1 с при игре, 3 с в паузе), команды |
 | `Views.swift` | обложка, прогресс, транспорт, режимы |
+| `DaemonSupervisor.swift` | запуск/готовность/завершение собственного демона |
+| `prepare-runtime.py`, `bundle-runtime.py`, `sign-app.sh` | приватный SDK, переносимые зависимости, подпись |
 
 Ограничения текущей версии:
 
@@ -205,8 +269,8 @@ gh workflow run macos-release.yml -f tag=v0.3.0   # то же в CI, если е
 - **Нет системной интеграции.** macOS не использует MPRIS; чтобы медиа-клавиши
   и «Now Playing» заработали, нужен отдельный модуль на `objc2` /
   `MPNowPlayingInfoCenter`. Это следующий шаг, а не текущая возможность.
-- **Нет GUI.** `ymd-qt` зависит от `KStatusNotifierItem` (D-Bus). Окно без трея
-  собрать можно, но это отдельная работа по `app/`.
+- **`ymd-qt` не переносился.** Он зависит от `KStatusNotifierItem` (D-Bus).
+  Нативный клиент macOS находится в `macos/`.
 - **Официальный клиент Яндекса** на macOS не управляется: демон играет сам,
   внешний плеер ему не нужен.
 - `security add-generic-password -w <token>` передаёт токен аргументом — он
@@ -236,5 +300,6 @@ codesign --force --options runtime --sign "Developer ID Application: …" target
 xcrun notarytool submit ymd.zip --keychain-profile ymd --wait
 ```
 
-Пока релизы собираются только для Linux; отдельный macOS-ассет появится,
-когда появится GUI или запросы от пользователей.
+DMG с самостоятельным SwiftUI-клиентом собирается локально; отдельный
+`macos-release.yml` может приложить его к существующему релизу вручную,
+если доступны macOS-минуты Actions.

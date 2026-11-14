@@ -39,18 +39,42 @@ GStreamer, кэш, «Моя волна», тексты) и тонкие клие
 
 Требуется macOS 13+, Apple Silicon, Xcode Command Line Tools, Homebrew, Rust.
 
+Самостоятельный `.app` и DMG целятся в macOS 13 Ventura+ arm64. Их сборка
+использует официальный GStreamer 1.28.8 в приватном кэше, с проверкой SHA-256,
+без установки `.pkg` в систему. На целевом Mac Homebrew и терминал не нужны:
+демон запускается приложением, вход и «Моя волна» доступны в попапе.
+Сборка/запуск проверены на macOS 27.2.1; запуск на Ventura ещё предстоит.
+
 ```bash
 xcode-select --install              # один раз
 brew install pkgconf gstreamer
 export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
 
-cargo test -p ymd                   # 43 теста, включая платформенные ветки
+cargo test -p ymd                   # 44 теста на macOS, включая платформенные ветки
 cargo build --release -p ymd
 bash packaging/macos/build.sh       # то же, но сам ставит зависимости
 
 LC_ALL=C bash macos/build.sh --install   # меню-бар клиент → ~/Applications
 bash macos/build-dmg.sh                  # dist/ymd-menubar-<версия>.dmg
 ```
+
+Для самостоятельной сборки достаточно CLT, Rust, Python 3.9+ и `pkg-config`
+(`brew install pkgconf`); установленные библиотеки Homebrew не используются
+внутри `.app`. `macos/build.sh` собирает встроенный демон в `target/macos13/`,
+проверяет arm64 и минимум macOS всех вложенных Mach-O (не выше 13.0).
+Команды `cargo` и `run-daemon.sh` выше/ниже — отдельный режим разработки CLI.
+
+Дополнительные локальные проверки:
+
+```bash
+python3 -m unittest discover -s macos/Tests -p 'test_*.py' -v
+bash macos/Tests/run-standalone-checks.sh
+python3 macos/Tests/check-runtime.py dist/ymd-menubar.app --https https://example.com/
+```
+
+Проверка runtime воспроизводит отсутствие Homebrew, включает короткий звук
+и HTTPS, проверяет отклонение недоверенного сертификата. Перед проверкой
+холодного запуска остановите ранее запущенные экземпляры клиента/демона.
 
 `LC_ALL=C` — обход локали: в UTF-8 системный Bash спотыкается на разборе
 `$version` перед многоточием.
@@ -112,6 +136,8 @@ gst-launch-1.0 audiotestsrc num-buffers=100 ! osxaudiosink
 3. `./target/release/ymd doctor`.
 4. Скриншот строки меню и попапа (или описание, если скриншот не снимается).
 5. Ошибки целиком, а не «не работает»: команда → вывод → ожидание.
+6. Для самостоятельного `.app`: холодный запуск собственного Helpers/ymd,
+   выход с его остановкой и подключение к внешнему без его остановки.
 
 ## Короткий промпт для агента
 

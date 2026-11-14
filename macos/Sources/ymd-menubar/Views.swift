@@ -14,6 +14,10 @@ struct PopoverView: View {
                 unavailable
             }
 
+            if let error = model.errorText, model.state?.track != nil {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            accountPanel
             Divider()
             footer
         }
@@ -119,12 +123,46 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Ничего не играет")
                 .font(.system(size: 14, weight: .semibold))
-            Text(model.errorText ?? "Запустите ymd serve и включите трек.")
+            Text(model.errorText ?? (model.connection == .starting ? "Запускаем музыкальный сервис…" : "Войдите в аккаунт и включите «Мою волну»."))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var accountPanel: some View {
+        if model.connection == .ready {
+            Divider()
+            if let account = model.account {
+                Text("Вы вошли как \(account.login)").font(.caption).foregroundStyle(.secondary)
+                Button { model.send("wave_start") } label: {
+                    Label("Моя волна", systemImage: "waveform")
+                }
+                .disabled(model.busy)
+            } else if model.authBusy {
+                if let flow = model.auth {
+                    Text("Введите код на странице Яндекса:").font(.caption)
+                    Text(flow.userCode).font(.system(.title2, design: .monospaced)).textSelection(.enabled)
+                    HStack {
+                        Button("Копировать код") { model.copyLoginCode() }
+                        Button("Открыть страницу") { model.openLoginPage() }
+                    }
+                    Text("Код действует до \(max(1, flow.expiresIn / 60)) мин.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ProgressView(model.authCancelling ? "Отменяем вход…" : "Получаем код…")
+                }
+                Button("Отменить вход") { model.cancelLogin() }.disabled(model.authCancelling)
+            } else {
+                Button("Войти в Яндекс Музыку") { model.login() }
+            }
+            if let error = model.authError {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        } else if model.connection != .starting {
+            Button("Повторить подключение") { model.connect() }
+        }
     }
 
     private var footer: some View {

@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 version="$(bash scripts/version.sh)"
-app="$repo/dist/ymd-menubar.app"
+app="${YMD_APP_OUTPUT:-$repo/dist/ymd-menubar.app}"
 dmg="$repo/dist/ymd-menubar-${version}.dmg"
 
 if [[ $build -eq 1 ]]; then
@@ -43,9 +43,7 @@ fi
 
 if [[ -n "$identity" ]]; then
   echo "подпись приложения: $identity"
-  codesign --force --deep --options runtime --timestamp \
-    --sign "$identity" "$app"
-  codesign --verify --deep --strict "$app"
+  bash macos/sign-app.sh "$app" "$identity"
 fi
 
 stage="$(mktemp -d)"
@@ -56,8 +54,10 @@ cat > "$stage/ЧИТАТЬ.txt" <<'TXT'
 ymd-menubar — клиент строки меню для демона ymd.
 
 1. Перетащите ymd-menubar.app в «Программы».
-2. Запустите демон: ymd serve (или LaunchAgent из docs/14-macos.md).
-3. Откройте приложение — иконка появится в строке меню.
+2. Откройте приложение — иконка появится в строке меню, демон запустится автоматически.
+3. Нажмите «Войти через Яндекс», завершите вход в браузере и включите «Мою волну».
+
+Homebrew, Rust и команды в терминале для запуска не нужны.
 
 Без подписи Developer ID macOS может предупредить при первом запуске:
 правый клик по приложению → «Открыть».

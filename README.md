@@ -105,15 +105,25 @@ bash packaging/macos/build.sh       # ставит зависимости и с�
 ./target/release/ymd serve
 ```
 
-Меню-бар клиент (SwiftUI, попап как в системном «Now Playing»):
+Самостоятельное приложение для строки меню (SwiftUI), целевая система —
+macOS 13 Ventura+ на Apple Silicon: перенесите `.app` из DMG в «Программы»,
+откройте, войдите через Яндекс и включите «Мою волну». Демон, аудиоплагины
+и библиотеки включены в `.app`; Homebrew и терминал для запуска не нужны.
+Сборка проверена на macOS 27.2.1, минимальные версии всех вложенных Mach-O
+проверяются на совместимость с 13.0; запуск на самой Ventura ещё не проверен.
+
+Сборка приложения из исходников (Xcode CLT, Rust, Python 3, `pkg-config`):
 
 ```bash
-bash macos/build.sh --install && open ~/Applications/ymd-menubar.app
+LC_ALL=C bash macos/build.sh --install
+open ~/Applications/ymd-menubar.app
 bash macos/build-dmg.sh                    # dist/ymd-menubar-<версия>.dmg
 ```
 
 Готовые сборки: `.deb`/`.rpm` — в релизах; DMG собирается на Mac
 (`hdiutil`), в релиз прикладывается вручную или через `macos-release.yml`.
+Официальный runtime GStreamer 1.28.8 скачивается в кэш сборки с проверкой
+SHA-256; глобально framework не устанавливается.
 
 Подробности, LaunchAgent и ограничения — `docs/14-macos.md`;
 бриф для работы над macOS-частью — `docs/15-macos-brief.md`.

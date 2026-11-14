@@ -33,6 +33,18 @@ pub struct Player {
     eos: Mutex<bool>,
 }
 
+#[cfg(target_os = "macos")]
+fn configure_macos_tls(source: &gst::Element, ca_file: &str) {
+    // У souphttpsrc собственная база доверия: путь Homebrew на другом Mac
+    // отсутствует. Проверка сертификатов остаётся включённой.
+    if source.find_property("tls-database").is_some() {
+        match gio::TlsFileDatabase::new(ca_file) {
+            Ok(database) => source.set_property("tls-database", database),
+            Err(error) => tracing::warn!("не удалось прочитать сертификаты из .app: {error}"),
+        }
+    }
+}
+
 impl Player {
     fn element() -> Result<gst::Element, PlayerError> {
         gst::ElementFactory::make("playbin3")
@@ -44,7 +56,17 @@ impl Player {
     pub fn new() -> Result<Self, PlayerError> {
         gst::init()?;
 
-        let playbin = Self::element()?;
+    let playbin = Self::element()?;
+      
+    #[cfg(target_os = "macos")]
+      if let Ok(ca_file) = std::env::var("YMD_CA_BUNDLE") {
+          playbin.connect("source-setup", false, move |values| {
+              if let Ok(source) = values[1].get::<gst::Element>() {
+                  configure_macos_tls(&source, &ca_file);
+              }
+              None
+          });
+      }
         playbin.set_property("volume", 1.0f64);
 
         Ok(Self {
@@ -233,5 +255,24 @@ impl Drop for Player {
         if let Ok(playbin) = self.playbin.lock() {
             let _ = playbin.set_state(gst::State::Null);
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_tls_uses_explicit_ca_without_disabling_verification() {
+        gst::init().unwrap();
+        let source = gst::ElementFactory::make("souphttpsrc").build().unwrap();
+        let ca_file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/macos-ca.pem");
+        configure_macos_tls(&source, ca_file);
+        let database = source.property::<gio::TlsDatabase>("tls-database");
+        assert_eq!(database.property::<String>("anchors"), ca_file);
+        assert!(source.property::<bool>("ssl-strict"));
+        // Локальный файл также вызывает source-setup, но TLS-свойств не имеет.
+        let file = gst::ElementFactory::make("filesrc").build().unwrap();
+        configure_macos_tls(&file, ca_file);
     }
 }
