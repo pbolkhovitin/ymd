@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Архив плагина Noctalia для ручной установки: dist/yandex-music-plugin-<ver>.tar.gz
+# Архив плагина Noctalia для ручной установки: dist/ymd-noctalia-plugin-<ver>.tar.gz
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,6 +12,6 @@ if [[ -z "$ver" ]]; then
 fi
 
 mkdir -p "$repo/dist"
-out="$repo/dist/yandex-music-plugin-$ver.tar.gz"
+out="$repo/dist/ymd-noctalia-plugin-$ver.tar.gz"
 tar czf "$out" -C "$src" .
 echo "$out"
