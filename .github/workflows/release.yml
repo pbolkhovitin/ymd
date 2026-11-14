@@ -1,47 +1,113 @@
 name: release
 
-# Релиз по тегу vMAJOR.MINOR.PATCH:
-#   1. тег должен совпадать с версией в манифестах;
-#   2. тесты;
-#   3. сборка .deb и .rpm (демон, плазмоид, ymd-qt) и архива плагина Noctalia;
-#   4. GitHub Release с заметками из CHANGELOG.md и вложенными файлами.
+# Контролируемый релиз:
+#   1. release-PR поднимает версию и раздел CHANGELOG, проходит ревью;
+#   2. вручную: gh workflow run release.yml -f tag=vX.Y.Z
+#      (или push тега — аварийный путь);
+#   3. verify проверяет тег, версию, CHANGELOG, HEAD и docs-check;
+#   4. test и build собирают пакеты;
+#   5. publish ждёт approve environment `release`, создаёт тег и GitHub
+#      Release и прикладывает артефакты.
 #
-# arm64 собирается вручную: bash packaging/build-deb.sh --arch arm64
+# dry_run=true (по умолчанию) прогоняет verify/test/build без тега и релиза.
+# Повторный запуск с тем же тегом обновляет существующий релиз.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег vX.Y.Z (коммит уже в main)"
+        required: true
+        type: string
+      dry_run:
+        description: "Только проверки и сборка, без тега и релиза"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
-    name: версия = тег
+    name: проверки
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.meta.outputs.sha }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
-      - name: Сверить манифесты
-        run: bash scripts/version.sh --check
-      - name: Сверить тег
-        run: bash scripts/version.sh --check-tag "$GITHUB_REF_NAME"
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+          fetch-depth: 0
+
+      - name: Метаданные
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-${GITHUB_REF_NAME}}"
+          dry="${INPUT_DRY_RUN:-false}"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            dry=false
+          fi
+          {
+            printf 'tag=%s\n' "$tag"
+            printf 'version=%s\n' "${tag#v}"
+            printf 'sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'dry_run=%s\n' "$dry"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Проверить релиз
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            bash scripts/release.sh check --ci --require-main-head "$TAG"
+          else
+            bash scripts/release.sh check --ci "$TAG"
+          fi
 
   test:
     name: тесты (Docker)
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 1
       - run: bash packaging/run-tests.sh -p ymd
 
   build:
     name: пакеты
-    needs: test
+    needs: [verify, test]
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 1
       - name: .deb демона и плазмоида
         run: bash packaging/build-deb.sh --arch amd64
       - name: .deb ymd-qt
@@ -60,18 +126,51 @@ jobs:
 
   publish:
     name: GitHub Release
-    needs: build
+    needs: [verify, test, build]
+    if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: release
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
 
+      - name: Тег
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          SHA: ${{ needs.verify.outputs.sha }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin --tags
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            existing=$(git rev-parse "$TAG^{commit}")
+            if [ "$existing" != "$SHA" ]; then
+              echo "тег $TAG указывает на $existing, а не на $SHA" >&2
+              exit 1
+            fi
+            echo "тег $TAG уже указывает на $SHA"
+          else
+            git tag -a "$TAG" -m "ymd $VERSION" "$SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+
       - name: Заметки из CHANGELOG.md
         run: |
-          version=$(bash scripts/version.sh)
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
           awk -v v="$version" '
             $0 ~ "^## \\[" v "\\]" { inside = 1; next }
             inside && /^## \[/ { exit }
@@ -79,15 +178,25 @@ jobs:
           ' CHANGELOG.md > release-notes.md
           # Заголовок раздела и пустые строки по краям не нужны.
           sed -i '/./,$!d' release-notes.md
+          test -s release-notes.md
           echo "--- release-notes.md ---"
           cat release-notes.md
 
-      - name: Создать релиз
+      - name: Создать или обновить релиз
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          version=$(bash scripts/version.sh)
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "ymd $version" \
-            --notes-file release-notes.md \
-            --verify-tag
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" \
+              --title "ymd $VERSION" \
+              --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/* \
+              --title "ymd $VERSION" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi

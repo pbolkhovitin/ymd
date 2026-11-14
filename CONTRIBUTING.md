@@ -87,24 +87,31 @@ workflow; новый участник добавляет свой туда же 
 Включено: squash-only мерж, удаление ветки после мержа, обновление ветки
 из `main`, шесть workflow (CI, release, macos-release, client-scope,
 commit-identity, pr-policy). Ветка `main` защищена: обязательны проверки
-`scope` и `author`, нужно одобрение ревью, force-push и удаление ветки
-запрещены. Администратор (`enforce_admins = false`) может пушить напрямую —
-так выпускаются релизы.
+`scope`, `author` и `policy`, нужно одобрение ревью, force-push и удаление
+ветки запрещены. Администратор (`enforce_admins = false`) может обойти
+защиту в аварийной ситуации, но обычные изменения и релизы идут через PR.
 
-Чтобы `pr-policy` блокировал мерж, job `policy` добавляется в обязательные
-проверки ветки `main` (Settings → Branches).
+Чтобы `pr-policy` блокировал мерж, job `policy` добавлен в обязательные
+проверки ветки `main` (Settings → Branches). Для релиза также настроены
+environment `release` с обязательным approve и ruleset на теги `v*`:
+удаление и перезапись тега запрещены.
 
 ## Релиз
 
-Релиз делает мейнтейнер, порядок — `docs/13-versioning.md`:
+Релиз делает мейнтейнер, порядок — `docs/13-versioning.md`. Версия и
+`CHANGELOG.md` идут отдельным release-PR, тег создаёт workflow после
+проверок и approve environment `release`:
 
 ```bash
-bash scripts/version.sh --bump patch     # версия + раздел в CHANGELOG
-git commit -am "chore(release): 0.2.1" && git push origin main
-bash scripts/version.sh --tag            # v0.2.1
-git push origin v0.2.1                   # запускает release.yml
+bash scripts/release.sh prepare minor       # ветка release/vX.Y.Z + PR
+# ревью и merge PR
+bash scripts/release.sh publish vX.Y.Z      # dry-run: verify/test/build
+bash scripts/release.sh publish vX.Y.Z --yes    # approve → тег + Release
+gh workflow run macos-release.yml -f tag=vX.Y.Z
 ```
 
-Тег и версия в манифестах обязаны совпадать — workflow `release` падает
-раньше сборки, если это не так. Пакеты и заметки появляются на странице
-Releases автоматически.
+Release-PR (`chore(release): X.Y.Z`) — исключение из правила «один PR —
+один клиент»: он меняет только манифесты версий четырёх клиентов и
+`CHANGELOG.md`; `client-scope` и `pr-check` это распознают. Тег и версия в
+манифестах обязаны совпадать — `release.yml` падает раньше сборки, если
+это не так. Пакеты и заметки появляются на странице Releases автоматически.

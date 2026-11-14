@@ -45,12 +45,13 @@
 | `noctalia/panel.luau` | панель Noctalia: шапка, seek-слайдер, громкость, транспорт, поиск, очередь | готов |
 | `noctalia/bridge.luau` | фоновая SSE-подписка | готов |
 | `scripts/install-noctalia.sh` | симлинк плагина в Noctalia + reload | готов |
-| `scripts/version.sh` | версии: `--check`, `--bump`, `--tag` | готов |
+| `scripts/version.sh` | версии: `--check`, `--next`, `--bump`, `--tag` | готов |
+| `scripts/release.sh` | релиз: `prepare`, `check`, `publish`, `status` | готов |
 | `macos/` | самостоятельный `ymd-menubar` (SwiftUI), встроенный демон/runtime, Device Flow, «Моя волна», target macOS 13 arm64 | готов; запуск проверен на 27.2.1 |
 | `packaging/` | Docker, `.deb`, `.rpm`, systemd unit | готов |
 | `scripts/` | сборка, установка, проверки | готов |
 | `.github/workflows/ci.yml` | версии, доки, тесты, архив плагина; ручной прогон `.rpm` | готов |
-| `.github/workflows/release.yml` | тег `v*` → `.deb`/`.rpm` + GitHub Release | готов |
+| `.github/workflows/release.yml` | вручную/тег → verify, тесты, `.deb`/`.rpm`, approve, тег + GitHub Release | готов |
 | `.github/workflows/macos-release.yml` | вручную: `.dmg` + tar.gz демона arm64 к релизу | готов |
 
 ## Ограничения окружения агента
@@ -83,15 +84,23 @@ docker run --rm -v "$PWD:/repo" docker.io/zricethezav/gitleaks:latest \
 
 Версия одна на весь проект, источник истины — `Cargo.toml`
 (`[workspace.package]`); манифесты синхронизируются только скриптом.
-Тег — `vMAJOR.MINOR.PATCH`, релиз собирает `release.yml` по тегу.
+Тег — `vMAJOR.MINOR.PATCH`. Тег не ставится вручную: его создаёт
+`release.yml` после проверок, сборки и approve environment `release`.
 
 ```bash
-bash scripts/version.sh --bump patch       # версия + раздел в CHANGELOG
-git commit -am "chore(release): X.Y.Z" && git push origin main
-bash scripts/version.sh --tag && git push origin vX.Y.Z
+bash scripts/release.sh prepare minor      # ветка release/vX.Y.Z + PR
+# ревью и merge PR
+bash scripts/release.sh publish vX.Y.Z     # dry-run: verify/test/build
+bash scripts/release.sh publish vX.Y.Z --yes   # approve → тег + Release
+gh workflow run macos-release.yml -f tag=vX.Y.Z
 ```
 
-Подробности — `docs/13-versioning.md`, история — `CHANGELOG.md`.
+`prepare` сам поднимает версию, переносит `[Unreleased]` в раздел версии,
+запускает `docs-check` и `pr-check` и открывает PR. Release-PR распознаётся
+`client-scope` и `pr-check` по заголовку `chore(release): X.Y.Z`; для него
+разрешены только манифесты версий и `CHANGELOG.md`. `publish` без `--yes`
+работает как dry-run. Подробности — `docs/13-versioning.md`, история —
+`CHANGELOG.md`.
 
 ## Документация обновляется автоматически
 
@@ -154,6 +163,11 @@ bash scripts/version.sh --tag && git push origin vX.Y.Z
 - галочки «Клиент» не совпадают с каталогами в diff;
 - тронут `daemon/`, `plasmoid/`, `app/`, `noctalia/` или `macos/`, а в
   `CHANGELOG.md` → `[Unreleased]` не добавлен пункт.
+
+Исключение — release-PR с заголовком `chore(release): X.Y.Z`: ему разрешены
+манифесты всех клиентов и `CHANGELOG.md`; вместо нового пункта в
+`[Unreleased]` проверяется непустой раздел `## [X.Y.Z]` и пустой
+`[Unreleased]`.
 
 Агент перед PR обязан:
 
