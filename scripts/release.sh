@@ -123,7 +123,9 @@ check_release() {
   # тег ставится на проверенный HEAD. Важно, чтобы release-коммит был
   # в истории, а не чтобы HEAD совпадал с ним.
   local re="^chore\\(release\\): ${version}( \\(#[0-9]+\\))?$"
-  if ! git log --format='%s' | grep -Eq "$re"; then
+  # grep без -q: иначе он закрывает pipe на первом совпадении, git log
+  # получает SIGPIPE, а pipefail превращает успешную проверку в ошибку.
+  if ! git log --format='%s' | grep -E "$re" >/dev/null; then
     die "в истории HEAD нет релизного коммита «chore(release): $version»"
   fi
   say "релизный коммит найден в истории HEAD"

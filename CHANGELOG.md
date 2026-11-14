@@ -20,7 +20,8 @@
 
 - Релиз: `Cargo.lock` обновляется вместе с версией, иначе `cargo build
   --locked` падал на сборке пакетов; `release.sh check` допускает
-  fix-коммиты после release-PR.
+  fix-коммиты после release-PR. Поиск релизного коммита больше не падает
+  из-за SIGPIPE в `git log | grep -q`.
 
 ### Добавлено
 
