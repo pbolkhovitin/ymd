@@ -68,7 +68,7 @@ jobs:
       - name: Проверить содержимое
         run: |
           version=$(bash scripts/version.sh)
-          archive="dist/yandex-music-plugin-${version}.tar.gz"
+          archive="dist/ymd-noctalia-plugin-${version}.tar.gz"
           test -f "$archive"
           tar tzf "$archive" | grep -qx './plugin.toml'
           echo "готово: $archive ($(stat -c%s "$archive") байт)"
