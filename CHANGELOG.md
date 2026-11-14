@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- Кодекс поведения участника (`CODE_OF_CONDUCT.md`, Contributor Covenant 2.1):
+  порядок приватного сообщения о нарушении и меры; ссылки из `README.md`
+  и `CONTRIBUTING.md`. Заполняет пункт Code of conduct в Community Standards.
+
 ## [0.3.0] - 2026-11-15
 
 ### Изменено
