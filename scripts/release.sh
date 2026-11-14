@@ -31,8 +31,8 @@ usage() {
   bash scripts/release.sh publish vX.Y.Z [--yes] [--watch]
 
 prepare  — версия + CHANGELOG, ветка release/vX.Y.Z и PR; тег не ставится.
-check    — версия = тег, раздел CHANGELOG, [Unreleased] пуст, HEAD —
-           релизный коммит, docs-check. --ci не требует чистого main.
+check    — версия = тег, раздел CHANGELOG, [Unreleased] пуст, релизный
+           коммит есть в истории HEAD, docs-check. --ci не требует чистого main.
 publish  — запуск release.yml; без --yes только проверки и сборка.
 --watch  — дождаться завершения запуска (включая approve environment).
 EOF
@@ -74,10 +74,6 @@ require_main_current() {
   fi
 }
 
-release_commit_subject() {
-  git log -1 --format='%s'
-}
-
 check_release() {
   local ci=0 require_main_head=0 tag=""
   while [ $# -gt 0 ]; do
@@ -99,9 +95,8 @@ check_release() {
   local version="${tag#v}"
 
   require_repo
-  local head_sha subject
+  local head_sha
   head_sha=$(git rev-parse HEAD)
-  subject=$(release_commit_subject)
 
   say "release-check: $tag, HEAD $head_sha"
   bash scripts/version.sh --check
@@ -124,9 +119,14 @@ check_release() {
       || die "main не совпадает с origin/main — выполните: git pull --ff-only"
   fi
 
+  # Фиксы после release-PR допустимы: версия и CHANGELOG уже в main,
+  # тег ставится на проверенный HEAD. Важно, чтобы release-коммит был
+  # в истории, а не чтобы HEAD совпадал с ним.
   local re="^chore\\(release\\): ${version}( \\(#[0-9]+\\))?$"
-  printf '%s' "$subject" | grep -Eq "$re" \
-    || die "HEAD не является релизным коммитом «chore(release): $version»: $subject"
+  if ! git log --format='%s' | grep -Eq "$re"; then
+    die "в истории HEAD нет релизного коммита «chore(release): $version»"
+  fi
+  say "релизный коммит найден в истории HEAD"
 
   if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     local tag_sha
@@ -193,7 +193,7 @@ prepare_release() {
   bash scripts/docs-check.sh
 
   git switch -c "$branch"
-  git add Cargo.toml noctalia/plugin.toml plasmoid/metadata.json \
+  git add Cargo.toml Cargo.lock noctalia/plugin.toml plasmoid/metadata.json \
     app/CMakeLists.txt CHANGELOG.md
   if git diff --cached --quiet; then
     die "version.sh не изменил ни одного файла"
@@ -204,7 +204,7 @@ prepare_release() {
   cat >"$body_file" <<EOF
 ## Что меняется
 
-Релиз $new: версия во всех манифестах и раздел \`CHANGELOG.md\`.
+Релиз $new: версия во всех манифестах, \`Cargo.lock\` и раздел \`CHANGELOG.md\`.
 
 ## Клиент
 

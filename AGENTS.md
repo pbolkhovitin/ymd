@@ -95,12 +95,14 @@ bash scripts/release.sh publish vX.Y.Z --yes   # approve → тег + Release
 gh workflow run macos-release.yml -f tag=vX.Y.Z
 ```
 
-`prepare` сам поднимает версию, переносит `[Unreleased]` в раздел версии,
-запускает `docs-check` и `pr-check` и открывает PR. Release-PR распознаётся
-`client-scope` и `pr-check` по заголовку `chore(release): X.Y.Z`; для него
-разрешены только манифесты версий и `CHANGELOG.md`. `publish` без `--yes`
-работает как dry-run. Подробности — `docs/13-versioning.md`, история —
-`CHANGELOG.md`.
+`prepare` сам поднимает версию в манифестах и `Cargo.lock`, переносит
+`[Unreleased]` в раздел версии, запускает `docs-check` и `pr-check` и
+открывает PR. Release-PR распознаётся `client-scope` и `pr-check` по
+заголовку `chore(release): X.Y.Z`; для него разрешены только манифесты
+версий, `Cargo.lock` и `CHANGELOG.md`. Проверка релиза требует, чтобы
+релизный коммит был в истории `HEAD`; fix-коммиты после release-PR
+допустимы. `publish` без `--yes` работает как dry-run. Подробности —
+`docs/13-versioning.md`, история — `CHANGELOG.md`.
 
 ## Документация обновляется автоматически
 
