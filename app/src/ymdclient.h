@@ -30,6 +30,10 @@ class YmdClient : public QObject
     Q_PROPERTY(QVariantList playlists READ playlists NOTIFY playlistsChanged)
     Q_PROPERTY(QVariantList playlistTracks READ playlistTracks NOTIFY playlistTracksChanged)
     Q_PROPERTY(QString playlistTitle READ playlistTitle NOTIFY playlistTracksChanged)
+    Q_PROPERTY(QVariantMap artistInfo READ artistInfo NOTIFY artistChanged)
+    Q_PROPERTY(QVariantList artistTracks READ artistTracks NOTIFY artistChanged)
+    Q_PROPERTY(QVariantMap albumInfo READ albumInfo NOTIFY albumChanged)
+    Q_PROPERTY(QVariantList albumTracks READ albumTracks NOTIFY albumChanged)
     Q_PROPERTY(QVariantList cacheItems READ cacheItems NOTIFY cacheChanged)
     Q_PROPERTY(qint64 cacheTotalBytes READ cacheTotalBytes NOTIFY cacheChanged)
     Q_PROPERTY(qint64 cacheLimitBytes READ cacheLimitBytes NOTIFY cacheChanged)
@@ -48,6 +52,10 @@ public:
     QVariantList playlists() const;
     QVariantList playlistTracks() const;
     QString playlistTitle() const;
+    QVariantMap artistInfo() const;
+    QVariantList artistTracks() const;
+    QVariantMap albumInfo() const;
+    QVariantList albumTracks() const;
     QVariantList cacheItems() const;
     qint64 cacheTotalBytes() const;
     qint64 cacheLimitBytes() const;
@@ -60,12 +68,21 @@ public:
     Q_INVOKABLE void retryKey();
     Q_INVOKABLE void loadPlaylists();
     Q_INVOKABLE void loadPlaylist(qint64 uid, qint64 kind);
+    Q_INVOKABLE void loadArtist(const QString &id);
+    Q_INVOKABLE void loadAlbum(const QString &id);
+    Q_INVOKABLE void startStation(const QString &station);
     Q_INVOKABLE void loadCache();
     Q_INVOKABLE void download(const QVariantMap &item);
     Q_INVOKABLE void downloadAll(const QVariantList &tracks);
     Q_INVOKABLE void removeCached(const QString &id);
     Q_INVOKABLE void clearCache();
     Q_INVOKABLE void setCacheLimit(qint64 limitMb);
+    Q_INVOKABLE void createPlaylist(const QString &title);
+    Q_INVOKABLE void deletePlaylist(qint64 kind);
+    Q_INVOKABLE void addTrackToPlaylist(qint64 kind, const QVariantMap &track);
+    Q_INVOKABLE void removeTrackFromPlaylist(qint64 kind, int index);
+    Q_INVOKABLE void likeTrack(const QString &id, bool liked);
+    Q_INVOKABLE void copyLink(const QString &id);
 
 signals:
     void stateChanged();
@@ -73,6 +90,8 @@ signals:
     void searchingChanged();
     void playlistsChanged();
     void playlistTracksChanged();
+    void artistChanged();
+    void albumChanged();
     void cacheChanged();
     void keyChanged();
     void authChanged();
@@ -104,6 +123,12 @@ private:
     QVariantList m_playlists;
     QVariantList m_playlistTracks;
     QString m_playlistTitle;
+    qint64 m_playlistUid = 0;
+    qint64 m_playlistKind = 0;
+    QVariantMap m_artistInfo;
+    QVariantList m_artistTracks;
+    QVariantMap m_albumInfo;
+    QVariantList m_albumTracks;
     QVariantList m_cacheItems;
     qint64 m_cacheTotalBytes = 0;
     qint64 m_cacheLimitBytes = 0;

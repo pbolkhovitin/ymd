@@ -1,9 +1,19 @@
-# ym-noctalia
+# ymd
+
+[![ci](https://github.com/pbolkhovitin/ymd/actions/workflows/ci.yml/badge.svg)](https://github.com/pbolkhovitin/ymd/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/pbolkhovitin/ymd?label=release)](https://github.com/pbolkhovitin/ymd/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Клиент **Яндекс Музыки** для **KDE Plasma 6** и **Noctalia** (niri): плазмоид
 в панели, отдельное приложение на Qt/Kirigami, плагин для бара Noctalia и
 Rust-демон `ymd`. Без Electron, без анимаций по умолчанию, с нативным PipeWire
 и MPRIS.
+
+> **Неофициальный клиент.** Проект не связан с ООО «Яндекс» и не поддерживается
+> им. «Яндекс Музыка» — товарный знак правообладателя; название используется
+> только для обозначения совместимости. Пользуйтесь подпиской, которую оплатили.
+> Правовая политика проекта — `LEGAL.md`, сторонние компоненты и товарные
+> знаки — `NOTICE`.
 
 ## Из чего состоит
 
@@ -22,6 +32,26 @@ Rust-демон `ymd`. Без Electron, без анимаций по умолч�
 Демон экспортирует MPRIS `org.mpris.MediaPlayer2.ymd`, поэтому медиа-клавиши и
 встроенный виджет `media` Plasma работают без нашего плазмоида.
 
+## Скриншоты
+
+Снято на реальном хосте: Fedora 44, niri 26.04, Noctalia v5.4.1, тема Dracula,
+аккаунт с подпиской (поток FLAC).
+
+**Бар** — значок действия (пауза, пока играет), трек и артист:
+
+![Виджет ymd в баре Noctalia](docs/images/noctalia-bar.png)
+
+**Панель** — качество потока, обложка, перемотка, транспорт, режимы
+(`♥`, повтор, перемешивание, «Волна», «Текст»), вкладки и очередь:
+
+![Панель ymd в Noctalia](docs/images/noctalia-panel.png)
+
+Скриншоты плазмоида и `ymd-qt` появятся с KDE-хоста: здесь запущен niri, эти
+клиенты на данной машине не собирались и не запускались.
+
+Social preview для GitHub — `docs/images/social-preview.png` (1280×640),
+пересобирается `bash scripts/social-preview.sh`.
+
 ## Установка из .deb
 
 Пакеты собираются в `dist/`:
@@ -29,15 +59,64 @@ Rust-демон `ymd`. Без Electron, без анимаций по умолч�
 ```bash
 bash packaging/build-deb.sh --arch arm64      # демон и плазмоид
 bash packaging/build-qt-deb.sh --arch arm64   # отдельное приложение
-sudo apt install ./ymd_0.2.0_arm64.deb ./plasma-widget-ymd_0.2.0_all.deb \
-                 ./ymd-qt_0.2.0_arm64.deb
+
+ver=$(bash scripts/version.sh)
+sudo apt install ./ymd_${ver}_arm64.deb ./plasma-widget-ymd_${ver}_all.deb \
+                 ./ymd-qt_${ver}_arm64.deb
 systemctl --user daemon-reload
 systemctl --user enable --now ymd
 ```
 
-После установки добавьте «Yandex Music» на панель: правый клик по панели →
-«Добавить виджеты» → «Yandex Music». Отдельное приложение запускается из меню
-или командой `ymd-qt`.
+После установки добавьте виджет «ymd» на панель: правый клик по панели →
+«Добавить виджеты» → «ymd». Отдельное приложение запускается из меню или
+командой `ymd-qt`.
+
+## Установка из .rpm (Fedora)
+
+Те же три пакета собираются в Fedora-контейнере (`rpmbuild`):
+
+```bash
+bash packaging/build-rpm.sh                  # amd64: демон, плазмоид, ymd-qt
+bash packaging/build-rpm.sh --arch arm64     # arm64
+bash packaging/build-rpm.sh --no-qt          # без ymd-qt, быстрее
+
+ver=$(bash scripts/version.sh)
+sudo dnf install ./ymd-${ver}-1.fc44.*.rpm \
+                 ./plasma-widget-ymd-${ver}-1.fc44.noarch.rpm \
+                 ./ymd-qt-${ver}-1.fc44.*.rpm
+systemctl --user daemon-reload
+systemctl --user enable --now ymd
+```
+
+Зависимости проставлены по именам Fedora (`gstreamer1`, `libsecret`,
+`playerctl`), библиотечные зависимости RPM вычисляет сам. Юнит ставится в
+`/usr/lib/systemd/user/ymd.service`, поэтому запускается от пользователя,
+а не от root.
+
+## Сборка для macOS (Apple Silicon)
+
+Демон собирается под arm64 обычным `cargo`; плазмоид и плагин Noctalia —
+Linux-only, а `ymd-qt` на macOS ждёт отдельной работы (трей через D-Bus).
+
+```bash
+brew install pkgconf gstreamer gst-plugins-base gst-plugins-good
+bash packaging/macos/build.sh       # ставит зависимости и собирает release
+./target/release/ymd auth login
+./target/release/ymd serve
+```
+
+Меню-бар клиент (SwiftUI, попап как в системном «Now Playing»):
+
+```bash
+bash macos/build.sh --install && open ~/Applications/ymd-menubar.app
+bash macos/build-dmg.sh                    # dist/ymd-menubar-<версия>.dmg
+```
+
+Готовые сборки: `.deb`/`.rpm` — в релизах; DMG собирается на Mac
+(`hdiutil`), в релиз прикладывается вручную или через `macos-release.yml`.
+
+Подробности, LaunchAgent и ограничения — `docs/14-macos.md`;
+бриф для работы над macOS-частью — `docs/15-macos-brief.md`.
 
 ## Установка плагина Noctalia
 
@@ -51,6 +130,23 @@ noctalia msg plugins list                 # должен появиться pbol
 
 Виджет добавляется в бар через настройки Noctalia (`Bar` → `widgets`), панель
 открывается правым кликом по виджету. Нужен Noctalia 5.x и `plugin_api >= 35`.
+
+## Релизы и версии
+
+Готовые пакеты и заметки — в [Releases](https://github.com/pbolkhovitin/ymd/releases).
+Релиз ставится тегом `vX.Y.Z` из `main`; CI собирает `.deb` и `.rpm` демона,
+плазмоида и `ymd-qt`, архив плагина Noctalia и создаёт GitHub Release.
+
+Одна версия на весь проект, источник истины — `Cargo.toml`:
+
+```bash
+bash scripts/version.sh            # текущая версия
+bash scripts/version.sh --check    # манифесты совпадают
+ymd --version                      # версия запущенного демона
+```
+
+Порядок выпуска, правила SemVer и changelog — `docs/13-versioning.md`,
+история изменений — `CHANGELOG.md`.
 
 ## Быстрый старт для разработки
 
@@ -89,9 +185,25 @@ bash packaging/build-qt-deb.sh --arch amd64
 | `ymd quality [lossless\|hq\|nq\|lq]` | качество звука |
 | `ymd download <id>` / `download-album <id>` | офлайн-кэш |
 | `ymd cache list\|path\|remove\|info` | управление кэшем |
+| `ymd lyrics <id> [--text]` | текст песни (LRC или чистый) |
 | `ymd track <id>` / `stream <id>` | метаданные и URL потока |
 | `ymd auth login\|import\|status\|logout` | авторизация |
 | `ymd doctor` | проверка окружения |
+| `ymd logs [-n N] [-f] [--path]` | хвост файла логов |
+
+## Логи
+
+Демон пишет в journald и в файл `~/.local/state/ymd/ymd.log` (ротация на
+5 МиБ). Уровень — `YMD_LOG` (по умолчанию `info`, для разбора очереди удобно
+`YMD_LOG=debug`).
+
+```bash
+ymd logs -n 50      # последние 50 строк
+ymd logs -f         # следить
+```
+
+Разбор «зациклило один трек»: сравните `track=` в строках `eos -> next`,
+`queue step` и `stream resolved` — они должны совпадать.
 
 ## Статус
 
@@ -100,11 +212,12 @@ bash packaging/build-qt-deb.sh --arch amd64
 | Демон: API, поток, GStreamer, MPRIS | ✅ |
 | Офлайн-кэш: download, LRU, локальное воспроизведение | ✅ |
 | «Моя волна»: запуск, автодогрузка, feedback | ✅ |
+| Открытие: главная, жанры/настроения, подборки, плейлисты, избранное, радио | ✅ демон и Noctalia |
 | Плазмоид: компакт, попап, поиск, очередь, режимы | ✅ |
 | Отдельное приложение Qt/Kirigami: окно + трей | ✅ |
-| Пакеты `.deb` (amd64/arm64) | ✅ |
-| Тексты песен | разведка API, код не начат |
-| Докачка после обрыва | не сделана |
+| Пакеты `.deb` и `.rpm` (amd64/arm64) | ✅ |
+| Тексты песен | ✅ демон, CLI, панель Noctalia |
+| Докачка после обрыва: `.part` + `Range`, проверка ключа | ✅ |
 | Ynison | не сделана |
 
 ## Документация
@@ -123,8 +236,15 @@ bash packaging/build-qt-deb.sh --arch amd64
 | `docs/07-roadmap.md` | этапы и следующий шаг |
 | `docs/08-risks.md` | риски и открытые вопросы |
 | `docs/09-p0-spikes.md` | проверки окружения и история спайков |
+| `docs/10-oauth-registration.md` | регистрация OAuth-приложения в Яндекс ID (историческая разведка) |
 | `docs/11-qt-app.md` | приложение `ymd-qt`: архитектура, сборка, трей, ограничения |
+| `docs/12-discovery-account.md` | главная, жанры/настроения, плейлисты, избранное, вход и настройки: анализ и план |
 | `notes/kde-port-findings.md` | факты порта: хост, QML, упаковка |
+| `notes/noctalia-ui-findings.md` | грабли Yoga/Luau в панели Noctalia |
+| `notes/m1-findings.md` … `m4-findings.md` | факты по этапам: поток, очередь, кэш, волна |
+| `notes/lyrics-findings.md` | подпись и формат текстов песен (разведка) |
+| `LEGAL.md` | правовая политика: товарные знаки, совместимость, порядок при претензии |
+| `NOTICE` | товарные знаки и лицензии сторонних компонентов |
 
 ## Требования
 
@@ -134,6 +254,12 @@ bash packaging/build-qt-deb.sh --arch amd64
 - `playerctl`, `libsecret-tools`, `dbus-user-session`.
 - Для сборки: Docker с binfmt для arm64 (демон — Rust + GStreamer dev,
   приложение — Qt 6 + Kirigami dev; всё уже в `packaging/Dockerfile*`).
+
+## Участие в разработке
+
+Подпись коммитов, ветки, правило «один PR — один клиент» и проверки CI —
+`CONTRIBUTING.md`. Коротко: свой `user.email` в git, ветка от свежего `main`,
+squash-merge, `scripts/docs-check.sh` перед PR.
 
 ## Связанные материалы
 

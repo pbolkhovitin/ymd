@@ -11,13 +11,54 @@ Controls.ItemDelegate {
     property bool showIndex: false
     property bool current: false
     property bool showDownload: false
+    property bool reorderable: false
+    property bool showRemoveFromPlaylist: false
+    property bool showRemoveFromQueue: false
+    property bool showEnqueue: true
+    property bool dragActive: false
+
     signal downloadClicked()
+    signal playRequested()
+    signal enqueueRequested()
+    signal likeRequested()
+    signal addToPlaylistRequested()
+    signal copyLinkRequested()
+    signal removeFromPlaylistRequested()
+    signal removeFromQueueRequested()
+    signal artistRequested()
+    signal albumRequested()
+    signal stationTrackRequested()
+    signal stationArtistRequested()
+    signal infoRequested()
+    signal moveRequested(int from, int to)
 
     Layout.fillWidth: true
     highlighted: current
 
+    Drag.active: dragActive
+    Drag.source: row
+    Drag.hotSpot.x: width / 2
+    Drag.hotSpot.y: height / 2
+
     contentItem: RowLayout {
         spacing: Kirigami.Units.smallSpacing
+
+        Controls.ToolButton {
+            visible: row.reorderable
+            text: "⠿"
+            font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
+            opacity: 0.45
+            implicitWidth: Kirigami.Units.iconSizes.smallMedium
+            implicitHeight: Kirigami.Units.iconSizes.smallMedium
+            Controls.ToolTip.text: "Перетащить"
+            Controls.ToolTip.visible: hovered
+
+            DragHandler {
+                id: handleDrag
+                target: null
+                onActiveChanged: row.dragActive = active
+            }
+        }
 
         Controls.Label {
             Layout.fillWidth: true
@@ -36,6 +77,128 @@ Controls.ItemDelegate {
             onClicked: row.downloadClicked()
             Controls.ToolTip.text: row.item && row.item.cached ? "Уже в кэше" : "Скачать для офлайна"
             Controls.ToolTip.visible: hovered
+        }
+
+        Controls.ToolButton {
+            text: "⋮"
+            implicitWidth: Kirigami.Units.iconSizes.smallMedium
+            implicitHeight: Kirigami.Units.iconSizes.smallMedium
+            onClicked: menu.popup(row,
+                                  Math.max(0, row.width - (menu.implicitWidth > 0 ? menu.implicitWidth : 220)),
+                                  row.height)
+            Controls.ToolTip.text: "Действия"
+            Controls.ToolTip.visible: hovered
+        }
+    }
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: function(point) {
+            var menuWidth = menu.implicitWidth > 0 ? menu.implicitWidth : 220;
+            menu.popup(row,
+                       Math.max(0, Math.min(point.position.x,
+                                            row.width - menuWidth)),
+                       Math.max(0, point.position.y))
+        }
+    }
+
+    DropArea {
+        anchors.fill: parent
+        onDropped: function(drag) {
+            if (drag.source && drag.source !== row && drag.source.rowIndex !== undefined) {
+                row.moveRequested(drag.source.rowIndex, row.rowIndex);
+            }
+        }
+    }
+
+    Controls.Menu {
+        id: menu
+
+        Controls.MenuItem {
+            text: "Играть"
+            onTriggered: row.playRequested()
+        }
+
+        Controls.MenuItem {
+            text: "В очередь"
+            visible: row.showEnqueue
+            onTriggered: row.enqueueRequested()
+        }
+
+        Controls.MenuSeparator {}
+
+        Controls.MenuItem {
+            text: "Перейти к исполнителю"
+            enabled: row.item && row.item.artistId !== undefined
+            onTriggered: row.artistRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Перейти к альбому"
+            enabled: row.item && row.item.albumId !== undefined
+            onTriggered: row.albumRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Станция по треку"
+            enabled: row.item && row.item.id !== undefined
+            onTriggered: row.stationTrackRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Станция по исполнителю"
+            enabled: row.item && row.item.artistId !== undefined
+            onTriggered: row.stationArtistRequested()
+        }
+
+        Controls.MenuSeparator {}
+
+        Controls.MenuItem {
+            text: "Информация о треке"
+            enabled: row.item && row.item.id !== undefined
+            onTriggered: row.infoRequested()
+        }
+
+        Controls.MenuItem {
+            text: row.item && row.item.cached ? "Уже в кэше" : "Скачать"
+            visible: row.showDownload && !(row.item && row.item.cached)
+            onTriggered: row.downloadClicked()
+        }
+
+        Controls.MenuSeparator {}
+
+        Controls.MenuItem {
+            text: row.item && row.item.liked ? "Убрать из любимых" : "В любимые"
+            enabled: row.item && row.item.id !== undefined
+            onTriggered: row.likeRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Добавить в плейлист…"
+            enabled: row.item && row.item.id !== undefined
+            onTriggered: row.addToPlaylistRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Копировать ссылку"
+            enabled: row.item && row.item.id !== undefined
+            onTriggered: row.copyLinkRequested()
+        }
+
+        Controls.MenuSeparator {
+            visible: row.showRemoveFromPlaylist || row.showRemoveFromQueue
+        }
+
+        Controls.MenuItem {
+            text: "Удалить из плейлиста"
+            visible: row.showRemoveFromPlaylist
+            onTriggered: row.removeFromPlaylistRequested()
+        }
+
+        Controls.MenuItem {
+            text: "Убрать из очереди"
+            visible: row.showRemoveFromQueue
+            onTriggered: row.removeFromQueueRequested()
         }
     }
 }

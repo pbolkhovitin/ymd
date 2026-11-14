@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Yandex Music
-Comment=Yandex Music client for the ymd daemon
+Name=ymd
+Comment=Unofficial Yandex Music client (daemon front-end)
 Exec=ymd-qt
-Icon=audio-x-generic
+Icon=ymd-qt
 Terminal=false
 Categories=AudioVideo;Audio;Player;
 Keywords=music;yandex;player;

@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ymd-qt VERSION 0.2.0 LANGUAGES CXX)
+project(ymd-qt VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Network Qml Quick QuickControls2 Widgets Test)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Widgets Test)
 find_package(KF6Kirigami REQUIRED)
 find_package(KF6StatusNotifierItem REQUIRED)
 
@@ -43,6 +43,7 @@ target_link_libraries(ymd-qt PRIVATE
 
 install(TARGETS ymd-qt RUNTIME DESTINATION bin)
 install(FILES ymd-qt.desktop DESTINATION share/applications)
+install(FILES icons/ymd-qt.svg DESTINATION share/icons/hicolor/scalable/apps)
 
 enable_testing()
 
@@ -53,6 +54,7 @@ qt_add_executable(test_ymdclient
 target_include_directories(test_ymdclient PRIVATE src)
 target_link_libraries(test_ymdclient PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Network
     Qt6::Test
 )

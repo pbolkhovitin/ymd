@@ -1,11 +1,17 @@
--- widget.luau — бар-виджет: статичная иконка музыки + "Трек — Артист".
+-- widget.luau — бар-виджет: глиф состояния + "Трек — Артист".
 -- Иконка не меняется (никаких play/pause-глифов и обложек): бар остаётся
 -- визуально стабильным, состояние читается по тексту и подсказке.
 -- Без анимаций: обновление раз в секунду только при воспроизведении.
 
 local ymd = require("./lib/ymd.luau")
 
-local ICON = "music"
+-- Семантика действия: на иконке то, что произойдёт по клику.
+local ICONS = {
+  playing = "player-pause",
+  paused = "player-play",
+  stopped = "player-play",
+  off = "music-off",
+}
 local MAX_CHARS = 34
 
 local s = {
@@ -13,7 +19,8 @@ local s = {
   title = "",
   artists = {},
   rev = -1,
-  icon_set = false,
+  errors = 0,
+  icon_status = nil,
 }
 
 local function safe_set_text(text)
@@ -40,13 +47,15 @@ local function safe_set_tooltip(text)
   pcall(barWidget.setTooltip, text)
 end
 
--- Иконка ставится один раз: повторные вызовы бессмысленны и мигают при reload.
+-- Иконка отражает состояние и ставится только при его смене: повторные вызовы
+-- бессмысленны и мигают при reload.
 local function ensure_icon()
-  if s.icon_set then
+  local name = ICONS[s.status] or "music"
+  if s.icon_status == name then
     return
   end
-  safe_set_glyph(ICON)
-  s.icon_set = true
+  safe_set_glyph(name)
+  s.icon_status = name
 end
 
 local function line()
@@ -88,11 +97,19 @@ local function apply(state)
   if type(state) ~= "table" then
     return
   end
-  if (state.rev or -1) <= s.rev then
+  -- Успешный ответ — демон снова на связи.
+  s.errors = 0
+
+  local rev = state.rev or 0
+  -- `rev` монотонен только внутри жизни демона: после `systemctl restart`
+  -- он начинается заново. Сравнение «больше» оставляло виджет в «ymd off»
+  -- навсегда, поэтому пропускаем только точное совпадение.
+  if rev == s.rev then
     return
   end
+  s.rev = rev
 
-  s.rev = state.rev or 0
+  local previous = s.status
   s.status = state.status or "idle"
 
   if state.track then
@@ -103,6 +120,9 @@ local function apply(state)
     s.artists = {}
   end
 
+  if previous ~= s.status then
+    noctalia.log("[ym] " .. tostring(previous) .. " -> " .. tostring(s.status))
+  end
   render()
 end
 
@@ -110,10 +130,17 @@ function update()
   noctalia.setUpdateInterval(s.status == "playing" and 1000 or 3000)
   ymd.get("/v1/state", function(state, err)
     if err then
-      s.status = "off"
-      s.title = ""
-      s.artists = {}
-      render()
+      -- Один сбой (рестарт демона, таймаут) не должен навсегда рисовать «off»:
+      -- показываем его после трёх подряд и продолжаем опрос.
+      s.errors = s.errors + 1
+      if s.errors >= 3 and s.status ~= "off" then
+        s.status = "off"
+        s.title = ""
+        s.artists = {}
+        s.rev = -1
+        noctalia.log("[ym] демон недоступен: " .. tostring(err))
+        render()
+      end
       return
     end
     apply(state)
@@ -149,7 +176,7 @@ function onIpc(event, payload)
 end
 
 function onEnable()
-  s.icon_set = false
+  s.icon_status = nil
   ensure_icon()
   noctalia.log("[ym] widget enabled")
 end

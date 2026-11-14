@@ -1,0 +1,64 @@
+name: macos-release
+
+# Сборка macOS-артефактов и прикладывание их к существующему релизу.
+# Запускается вручную, потому что macOS-минуты в Actions ограничены:
+#
+#   gh workflow run macos-release.yml -f tag=v0.3.0
+#
+# Без подписи Developer ID приложение не нотаризовано — macOS предупредит
+# при первом запуске. Секреты для нотаризации сюда не передаются.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Версия совпадает с тегом
+        run: bash scripts/version.sh --check-tag "${{ inputs.tag }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: GStreamer из Homebrew
+        run: brew install pkgconf gstreamer
+
+      - name: Тесты
+        run: cargo test --locked -p ymd
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
+
+      - name: Демон (arm64)
+        run: cargo build --release --locked -p ymd
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig
+
+      - name: Приложение и DMG
+        run: |
+          LC_ALL=C bash macos/build.sh
+          bash macos/build-dmg.sh --no-build
+
+      - name: Демон в архив
+        run: |
+          v="${TAG#v}"
+          tar -czf "dist/ymd-${v}-macos-arm64.tar.gz" -C target/release ymd
+        env:
+          TAG: ${{ inputs.tag }}
+
+      - name: Приложить к релизу
+        run: gh release upload "${{ inputs.tag }}" dist/*.dmg dist/*-macos-arm64.tar.gz --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

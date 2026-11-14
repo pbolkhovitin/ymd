@@ -1,0 +1,48 @@
+name: Предложение
+description: Новая функция или улучшение интерфейса
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Задача
+      description: Что неудобно сейчас и в каком сценарии
+      placeholder: В баре не видно, играет ли трек, — приходится открывать панель.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Как это должно работать
+      description: Поведение, а не реализация; ограничения проекта — без анимаций, цвета из темы
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: Клиент
+      multiple: true
+      options:
+        - демон ymd
+        - плазмоид Plasma 6
+        - приложение ymd-qt
+        - плагин Noctalia
+        - документация/пакеты
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Что уже пробовали, другие клиенты, обходные пути
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Границы
+      options:
+        - label: Функция не требует токена в клиенте (токен — только у демона)
+        - label: Дизайн укладывается в правила docs/design/ui-rules.md

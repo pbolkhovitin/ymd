@@ -162,12 +162,11 @@ pub fn token_from_input(input: &str) -> Result<String, AuthError> {
         return Err(AuthError::NotFound("пустой ввод".into()));
     }
 
-    for part in trimmed.split('#').skip(1).chain(
-        trimmed
-            .split_once('?')
-            .map(|(_, q)| q)
-            .into_iter(),
-    ) {
+    for part in trimmed
+        .split('#')
+        .skip(1)
+        .chain(trimmed.split_once('?').map(|(_, q)| q).into_iter())
+    {
         if let Some(token) = param(part, "access_token") {
             return Ok(token);
         }
@@ -251,19 +250,31 @@ pub async fn validate(token: &str) -> Result<Account, AuthError> {
 
 // ---------------------------------------------------------------- хранение
 
-fn secret_tool_available() -> bool {
-    // `secret-tool` не поддерживает `--version` (печатает usage и выходит с ошибкой),
-    // поэтому проверяем наличие в PATH.
+fn on_path(name: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| {
-                let candidate = dir.join("secret-tool");
-                candidate.is_file()
-            })
-        })
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(name).is_file()))
         .unwrap_or(false)
 }
 
+/// Linux — `secret-tool` (libsecret), macOS — `security` (связка ключей).
+fn keyring_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // `secret-tool` не поддерживает `--version` (печатает usage и выходит
+        // с ошибкой), поэтому проверяем наличие в PATH.
+        on_path("secret-tool")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        on_path("security")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn keyring_store(login: &str, token: &str) -> Result<(), AuthError> {
     let mut child = Command::new("secret-tool")
         .args(["store", "--label", "ymd OAuth token"])
@@ -290,6 +301,26 @@ fn keyring_store(login: &str, token: &str) -> Result<(), AuthError> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn keyring_store(login: &str, token: &str) -> Result<(), AuthError> {
+    // -U обновляет существующую запись. Токен передаётся аргументом: он виден
+    // в `ps` доли секунды. Keychain всё равно надёжнее файла `0600`.
+    let out = Command::new("security")
+        .args(["add-generic-password", "-U"])
+        .args(["-s", SECRET_SERVICE, "-a", login, "-w", token])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| AuthError::Store(format!("security: {e}")))?;
+    if !out.status.success() {
+        return Err(AuthError::Store(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn keyring_load(login: &str) -> Option<String> {
     let out = Command::new("secret-tool")
         .args(["lookup", "service", SECRET_SERVICE])
@@ -305,10 +336,34 @@ fn keyring_load(login: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn keyring_load(login: &str) -> Option<String> {
+    let out = Command::new("security")
+        .args(["find-generic-password", "-s", SECRET_SERVICE, "-a", login, "-w"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[cfg(target_os = "linux")]
 fn keyring_clear(login: &str) {
     let _ = Command::new("secret-tool")
         .args(["clear", "service", SECRET_SERVICE])
         .args([SECRET_ATTR, login])
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(target_os = "macos")]
+fn keyring_clear(login: &str) {
+    let _ = Command::new("security")
+        .args(["delete-generic-password", "-s", SECRET_SERVICE, "-a", login])
         .stderr(Stdio::null())
         .status();
 }
@@ -341,7 +396,7 @@ fn file_load() -> Option<String> {
 pub fn save(account: &Account, token: &str) -> Result<Account, AuthError> {
     let mut account = account.clone();
 
-    if secret_tool_available() && keyring_store(&account.login, token).is_ok() {
+    if keyring_available() && keyring_store(&account.login, token).is_ok() {
         account.backend = "keyring".into();
         let _ = fs::remove_file(file_token_path());
     } else {

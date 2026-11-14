@@ -30,5 +30,5 @@ fi
 
 echo
 echo "Добавь виджет в панель: ПКМ по панели → «Настроить панель» → «Добавить» →"
-echo "«Yandex Music». Если виджет уже добавлен, перезапусти plasmashell:"
+echo "«ymd». Если виджет уже добавлен, перезапусти plasmashell:"
 echo "  systemctl --user restart plasma-plasmashell"

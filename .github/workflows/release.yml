@@ -1,0 +1,93 @@
+name: release
+
+# Релиз по тегу vMAJOR.MINOR.PATCH:
+#   1. тег должен совпадать с версией в манифестах;
+#   2. тесты;
+#   3. сборка .deb и .rpm (демон, плазмоид, ymd-qt) и архива плагина Noctalia;
+#   4. GitHub Release с заметками из CHANGELOG.md и вложенными файлами.
+#
+# arm64 собирается вручную: bash packaging/build-deb.sh --arch arm64
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: версия = тег
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сверить манифесты
+        run: bash scripts/version.sh --check
+      - name: Сверить тег
+        run: bash scripts/version.sh --check-tag "$GITHUB_REF_NAME"
+
+  test:
+    name: тесты (Docker)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash packaging/run-tests.sh -p ymd
+
+  build:
+    name: пакеты
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: .deb демона и плазмоида
+        run: bash packaging/build-deb.sh --arch amd64
+      - name: .deb ymd-qt
+        run: bash packaging/build-qt-deb.sh --arch amd64
+      - name: архив плагина Noctalia
+        run: bash packaging/build-noctalia.sh
+      - name: .rpm демона, плазмоида и ymd-qt
+        run: bash packaging/build-rpm.sh --arch amd64
+      - name: Список артефактов
+        run: ls -lh dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Заметки из CHANGELOG.md
+        run: |
+          version=$(bash scripts/version.sh)
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
+            inside && /^## \[/ { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+          # Заголовок раздела и пустые строки по краям не нужны.
+          sed -i '/./,$!d' release-notes.md
+          echo "--- release-notes.md ---"
+          cat release-notes.md
+
+      - name: Создать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(bash scripts/version.sh)
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "ymd $version" \
+            --notes-file release-notes.md \
+            --verify-tag

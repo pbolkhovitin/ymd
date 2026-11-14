@@ -85,7 +85,11 @@ impl MprisRoot {
 
     #[zbus(property)]
     fn supported_mime_types(&self) -> Vec<String> {
-        vec!["audio/mpeg".to_string(), "audio/mp4".to_string(), "audio/flac".to_string()]
+        vec![
+            "audio/mpeg".to_string(),
+            "audio/mp4".to_string(),
+            "audio/flac".to_string(),
+        ]
     }
 
     fn raise(&self) {}

@@ -1,0 +1,11 @@
+FROM docker.io/library/fedora:44
+RUN dnf -y install --setopt=install_weak_deps=False \
+    --disablerepo='*openh264*' \
+    ca-certificates gzip tar make cmake ninja-build \
+    gcc gcc-c++ pkgconf-pkg-config \
+    extra-cmake-modules \
+    qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg-devel \
+    kf6-kirigami-devel kf6-kstatusnotifieritem-devel \
+    rpm-build \
+    && dnf clean all
+WORKDIR /work

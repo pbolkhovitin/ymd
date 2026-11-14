@@ -65,3 +65,30 @@ GET /tracks/{trackId}/lyrics
 - `stream()`-клиент уже умеет `fetch_range`, но для S3 авторизация не нужна:
   обычный GET без заголовков.
 - Ошибки: нет текста у трека → `404`/пустой `result`; истёкший `timeStamp` → `403`.
+
+## Реализация (2026-11-14)
+
+| Что | Где |
+|---|---|
+| `LyricsFormat::{Text, Lrc}`, `Lyrics`, `Client::lyrics()` | `daemon/src/api.rs` |
+| `sign_lyrics()` — **без** обрезки base64 (была ошибка: использовался `strip_padding`) | `daemon/src/media.rs` |
+| `GET /v1/lyrics?id=&format=lrc\|text` | `daemon/src/httpd.rs` |
+| `ymd lyrics <id> [--text] [--json]` | `daemon/src/main.rs` |
+| Кнопка «Текст», окно ±2 строки, подсветка текущей | `noctalia/panel.luau` |
+
+Проверено живьём (`ymd 0.2.0`, сервис `ymd.service`):
+
+```
+ymd lyrics 657960            → LRC с [00:19.67] My girlfriend, my dumb donut
+ymd lyrics 657960 --text     → строки без таймкодов
+GET /v1/lyrics?id=657960     → {"format":"LRC","lyricId":8195311,"major":"Musixmatch",…}
+GET /v1/lyrics без ключа     → 401
+```
+
+Грабли:
+
+- `sign_lyrics` был скопирован с `file-info` вместе с `strip_padding()` — для
+  lyrics это даёт `403 Invalid Sign`. Паддинг обязателен; тест
+  `lyrics_signature_keeps_padding` фиксирует длину 44 и наличие `=`.
+- `RICH_JSON` не используем: у проверенных треков `result` пустой.
+- Текст приходит не в JSON, а по presigned-ссылке; без авторизации, обычный GET.

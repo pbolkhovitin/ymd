@@ -9,10 +9,18 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 pub fn runtime_dir() -> PathBuf {
-    match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir).join("ymd"),
-        _ => PathBuf::from("/tmp").join(format!("ymd-{}", std::process::id())),
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir).join("ymd");
+        }
     }
+    // macOS: XDG_RUNTIME_DIR не задаётся, а /tmp общий. Держим ключ в
+    // пользовательском Application Support — путь стабилен между рестартами.
+    #[cfg(target_os = "macos")]
+    if let Some(base) = dirs::data_dir() {
+        return base.join("ymd/run");
+    }
+    PathBuf::from("/tmp").join(format!("ymd-{}", std::process::id()))
 }
 
 pub fn key_path() -> PathBuf {

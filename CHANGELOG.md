@@ -1,0 +1,104 @@
+# Журнал изменений
+
+Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
+версии — [SemVer](https://semver.org/lang/ru/). Теги — `vMAJOR.MINOR.PATCH`.
+
+Разделы: **Добавлено**, **Изменено**, **Исправлено**, **Удалено**.
+Релизы и собранные пакеты — на странице
+[Releases](https://github.com/pbolkhovitin/ymd/releases).
+
+## [Unreleased]
+
+### Добавлено
+
+- `docs/15-macos-brief.md` — бриф для внешнего контрибьютора: сборка, запуск,
+  правила PR и что прислать после проверки; каталог `/macos/` закреплён за
+  `@4epenaxa` в `CODEOWNERS`.
+- Social preview для GitHub: `docs/images/social-preview.png` (1280×640) и
+  скрипт `scripts/social-preview.sh` для его пересборки.
+- Скриншоты в `docs/images/` и раздел «Скриншоты» в `README.md`
+  (бар и панель Noctalia на niri).
+- Сборка RPM для Fedora: `packaging/build-rpm.sh` собирает демон, плазмоид
+  и `ymd-qt` через `rpmbuild` в контейнере; пакеты прикладываются к релизу.
+- macOS (Apple Silicon): `packaging/macos/build.sh`, `docs/14-macos.md`,
+  `mpris_stub.rs` и `cfg`-разделение модулей — демон собирается под arm64,
+  токен хранится в связке ключей (`security`), MPRIS отключён.
+- `ymd-menubar`: SwiftUI-клиент для строки меню macOS (обложка, прогресс,
+  транспорт, повтор, shuffle) — `macos/build.sh`.
+- macOS: `macos/build-dmg.sh` собирает `ymd-menubar-<версия>.dmg` (памятка,
+  симлинк на `/Applications`, опциональная подпись `--sign`), вручную или
+  через workflow `macos-release.yml`; к релизу прикладывается `.dmg` и
+  tar.gz демона arm64.
+
+### Исправлено
+
+- macOS: синтаксис `Button` в SwiftUI-клиенте (явный `label:`); добавлен
+  `macos/run-daemon.sh` для запуска с аудиоплагинами без конфликтов
+  GTK 3/GTK 4 и Python GI в Homebrew GStreamer.
+- Панель Noctalia: обложка не загружалась при открытии — `ensure_cover()`
+  вызывался до `refresh()`, когда `cover_url` ещё пуст; теперь вызывается
+  в `apply()` сразу после нового состояния.
+- CI: `docs-check.sh` валил сборку на правках в `packaging/` — проверка
+  «документация не старше кода» теперь гейтит только исходники
+  (`daemon`, `plasmoid`, `app`, `noctalia`), а упаковка, скрипты и workflow
+  выводятся подсказкой.
+- CI: `docs-check.sh` считал merge-коммит (`Update branch` в PR) свежей
+  правкой кода и ложно ронял проверку — теперь история смотрится с
+  `--no-merges`.
+- CI: проверка автора коммита падала на внешнем контрибьюторе — список
+  разрешённых адресов в `commit-identity.yml` пополняется при добавлении
+  участника (`@4epenaxa` — владелец `/macos/`).
+- Релиз `v0.2.1` вышел до появления RPM-сборки — три `.rpm` (демон, плазмоид,
+  `ymd-qt`) приложены к нему вручную; следующие теги получают их автоматически.
+- CI: сборку `.rpm` можно прогнать вручную (`gh workflow run ci.yml -f packages=true`)
+  до выпуска тега.
+
+## [0.2.1] - 2026-11-14
+
+### Добавлено
+
+- `scripts/version.sh`: единый источник версии (`Cargo.toml`), сверка
+  манифестов, `--set`/`--bump`/`--tag`.
+- `CHANGELOG.md` в формате Keep a Changelog.
+- CI (`.github/workflows/ci.yml`): версии, документация, тесты в Docker,
+  сборка архива плагина.
+- Релизный workflow (`.github/workflows/release.yml`): проверка тега, тесты,
+  `.deb` демона/плазмоида/`ymd-qt`, архив плагина Noctalia, GitHub Release
+  с заметками из этого файла.
+- Шаблоны `bug_report`, `feature_request`, `config.yml` и `PULL_REQUEST_TEMPLATE.md`.
+- Бейджи CI, релиза и лицензии в `README.md`.
+
+## [0.2.0] - 2026-11-14
+
+### Добавлено
+
+- Демон `ymd`: OAuth Device Flow и импорт токена из официального клиента,
+  токен в GNOME Keyring, capability-ключ `0600` в `$XDG_RUNTIME_DIR/ymd`.
+- GStreamer `playbin3` → PipeWire, исходящий MPRIS `org.mpris.MediaPlayer2.ymd`,
+  резервный мост к внешним плеерам через `playerctl`.
+- API-клиент: поиск, треки, альбомы, исполнители, главная, discovery, радио,
+  лайки, тексты песен, «Моя волна» (rotor) с автодогрузкой.
+- Поток: подписанный `/get-file-info` (пара «заголовок клиента + ключ»),
+  качества `lossless`/`hq`/`nq`, фоллбэк на `hq`, настройка в
+  `~/.config/ymd/config.toml`.
+- Офлайн-кэш `encraw` + AES-CTR, LRU-лимит, докачка после обрыва
+  (`.part` + `Range` + отпечаток ключа).
+- Логирование в `~/.local/state/ymd/ymd.log` с ротацией, `ymd logs [-f]`,
+  структурные события очереди и EOS.
+- systemd user-юнит `ymd.service`, `scripts/install-user-service.sh`.
+- Клиенты: плазмоид Plasma 6, приложение `ymd-qt` (Qt 6/Kirigami),
+  плагин Noctalia (бар, панель, bridge, тексты, обложки).
+- Пакеты `.deb` (демон, плазмоид, `ymd-qt`) и архив плагина Noctalia.
+
+### Исправлено
+
+- Зацикливание одного трека: расчёт следующего индекса вынесен в общий
+  `plan_step()`, индекс передаётся в команду — состояние и звук совпадают
+  при `repeat`/`shuffle`.
+- Виджет Noctalia залипал в «ymd off» после рестарта демона (`rev`
+  не монотонен между запусками); «off» теперь только после трёх ошибок.
+- Висячий симлинк плагина Noctalia после переименования репозитория:
+  `ymd doctor` проверяет ссылку, установщик пересоздаёт её.
+
+[Unreleased]: https://github.com/pbolkhovitin/ymd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pbolkhovitin/ymd/releases/tag/v0.2.0

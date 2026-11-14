@@ -44,10 +44,7 @@ fn run(player: &str, args: &[&str]) -> Option<String> {
 
 /// Первый доступный плеер: сначала из списка предпочтений, иначе любой.
 pub fn detect() -> Option<String> {
-    let list = Command::new("playerctl")
-        .arg("--list-all")
-        .output()
-        .ok()?;
+    let list = Command::new("playerctl").arg("--list-all").output().ok()?;
     if !list.status.success() {
         return None;
     }
@@ -59,10 +56,7 @@ pub fn detect() -> Option<String> {
         .collect();
 
     for preferred in PREFERRED {
-        if let Some(found) = players
-            .iter()
-            .find(|p| p.eq_ignore_ascii_case(preferred))
-        {
+        if let Some(found) = players.iter().find(|p| p.eq_ignore_ascii_case(preferred)) {
             return Some(found.clone());
         }
     }

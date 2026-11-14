@@ -39,7 +39,7 @@ PlasmoidItem {
     compactRepresentation: CompactRepresentation { applet: root }
     fullRepresentation: FullRepresentation { applet: root }
 
-    toolTipMainText: title || "Yandex Music"
+    toolTipMainText: title || "ymd"
     toolTipSubText: artistLine || (keyReady ? lastError : "Демон не запущен")
 
     function baseUrl() {

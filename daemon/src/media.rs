@@ -43,12 +43,16 @@ pub fn direct_link(host: &str, path: &str, ts: &str, s: &str) -> String {
     hasher.update(SIGN_SALT.as_bytes());
     hasher.update(path.get(1..).unwrap_or("").as_bytes());
     hasher.update(s.as_bytes());
-    let sign = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let sign = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     format!("https://{host}/get-mp3/{sign}/{ts}{path}")
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // используется для encraw (офлайн) в M3
+#[allow(dead_code)] // ключи нужны для подписи stream/lyrics
 pub enum SecretKey {
     Web,
     Windows,
@@ -105,8 +109,9 @@ pub fn sign_file_info(
 
 #[allow(dead_code)] // lyrics — M3
 pub fn sign_lyrics(secret: &str, track_id: u64, ts: u64) -> String {
+    // В отличие от file-info, здесь base64 отдаётся целиком, с паддингом.
     let payload = format!("{track_id}{ts}");
-    strip_padding(&hmac_base64(secret, payload.as_bytes()))
+    hmac_base64(secret, payload.as_bytes())
 }
 
 fn hmac_base64(secret: &str, data: &[u8]) -> String {
@@ -129,6 +134,17 @@ fn strip_padding(signature: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lyrics_signature_keeps_padding() {
+        // 32 байта HMAC → 44 символа base64 с одним `=`.
+        let signature = sign_lyrics(SecretKey::Windows.as_str(), 657960, 1_700_000_000);
+        assert!(
+            signature.ends_with('='),
+            "padding must be kept: {signature}"
+        );
+        assert_eq!(signature.len(), 44);
+    }
 
     #[test]
     fn signature_is_stable_and_unpadded() {

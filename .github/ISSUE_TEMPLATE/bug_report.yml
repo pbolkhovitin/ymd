@@ -1,0 +1,78 @@
+name: Ошибка
+description: Что-то работает не так — воспроизводимо и с логами
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Пожалуйста, приложите лог демона:
+        `ymd logs -n 200` (файл `~/.local/state/ymd/ymd.log`).
+        Токены и ключи из лога не попадают, но проверьте вывод перед отправкой.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что происходит
+      description: Ожидаемое и фактическое поведение
+      placeholder: |
+        Ожидал: трек переключается на следующий.
+        Фактически: играет тот же трек по кругу.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      placeholder: |
+        1. ymd wave
+        2. repeat = один
+        3. дождаться конца трека
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: Где видно проблему
+      multiple: true
+      options:
+        - демон ymd (CLI, HTTP, MPRIS)
+        - плазмоид Plasma 6
+        - приложение ymd-qt
+        - плагин Noctalia (бар/панель)
+        - пакет/сборка (.deb, Docker)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      description: Вывод `ymd --version` и тег релиза
+      placeholder: ymd 0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Система
+      placeholder: Fedora 44, niri 26.04, Noctalia 5.4.1, PipeWire 1.4
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Лог
+      description: Вывод `ymd logs -n 200` вокруг момента ошибки
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверено
+      options:
+        - label: Я запускал(а) `ymd doctor` и прикладываю вывод
+        - label: Это не вопрос безопасности (иначе — SECURITY.md)

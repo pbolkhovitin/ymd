@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость или утечка ключей
+    url: https://github.com/pbolkhovitin/ymd/blob/main/SECURITY.md
+    about: Не открывайте публичный issue — порядок раскрытия описан в SECURITY.md
+  - name: Вопрос по установке
+    url: https://github.com/pbolkhovitin/ymd/blob/main/README.md
+    about: Сборка, .deb и автозапуск — в README и docs/04-daemon.md

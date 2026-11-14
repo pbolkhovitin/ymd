@@ -170,7 +170,13 @@ Item {
                 icon.color: applet.track && applet.track.liked
                     ? Kirigami.Theme.highlightColor
                     : Kirigami.Theme.textColor
-                onClicked: applet.cmd("like")
+                onClicked: {
+                    if (!applet.track) return;
+                    applet.cmd("like_track", {
+                        id: applet.track.id,
+                        liked: !applet.track.liked
+                    });
+                }
             }
 
             PlasmaComponents3.ToolButton {

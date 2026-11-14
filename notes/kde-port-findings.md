@@ -155,3 +155,61 @@
   `rev: 0` приходит снова, Plasma перезапускать не нужно.
 - Для полноценной проверки поиска/воспроизведения на целевой машине нужен
   токен: `ymd auth login` или `ymd auth import`.
+
+## Управление плейлистами, очередь и метаданные (2026-11-14)
+
+- Управление плейлистами: `playlist_create` (`title`, `visibility`),
+  `playlist_delete` (`kind`), `playlist_add_tracks` (`kind`, `tracks`),
+  `playlist_remove_track` (`kind`, `index`). Перед изменением демон сам
+  запрашивает `/users/{uid}/playlists/{kind}` и берёт актуальный `revision`;
+  diff: `insert{at,tracks:[{id,albumId}]}`, `delete{from,to}`. `like_track`
+  ходит в `/likes/tracks/add-multiple|remove` (`track-ids`) и обновляет лайк
+  в очереди и текущем треке.
+- Очередь: `queue_move {from,to}` переставляет элемент и корректирует
+  `queue.index`, поэтому играющий трек остаётся выбранным. В UI — drag&drop
+  за ручку `⠿`; `queue_set`/`play_track`/`queue_*`/громкость/режимы сохраняют
+  `~/.local/share/ymd/state.json` (tmp+rename), при старте `restore_state`
+  восстанавливает очередь, трек, позицию, громкость и качество со статусом
+  `paused`. `play`/`toggle` после рестарта резолвят поток заново.
+- Метаданные: `Track.albumId`, `QueueItem.albumId/liked`, `State.bitrateKbps`;
+  `resolve_url` возвращает битрейт из API или кэша, `cache::Entry.bitrate_kbps`
+  сохраняется при скачивании. Статус в окне: `FLAC · 1411 кбит/с`
+  (`format.js::streamLabel`).
+- UI: поиск по detail плейлиста (название/артист/альбом, счётчик `N / total`),
+  создание/удаление плейлиста, добавление трека из контекстного меню `⋮` или
+  правого клика, удаление трека из плейлиста, «Копировать ссылку»
+  (`https://music.yandex.ru/track/<id>`), «Убрать из очереди». Списки
+  плейлистов и треков — `ListView` (виртуализированы), очередь — `Repeater`
+  до 8.
+- Сборка amd64: демон **34 passed**, Qt ctest 1/1 (7 кейсов). Плазмоид не
+  менялся; новые команды ему не нужны.
+
+## Переход к артисту/альбому и станции (2026-11-14)
+
+- Контекстное меню в `TrackRow` теперь открывается рядом со строкой:
+  `menu.popup(row, x, y)` от кнопки `⋮` (справа, под строкой) и от точки
+  правого клика (`TapHandler` → `point.position`).
+- В `Track`/`QueueItem` добавлен `artistId` (из `artists[0].id` API или
+  `artistId` payload); `simplify_track` также отдаёт `artistId`.
+- Демон: `GET /v1/artist?id=` (`/artists/{id}/info` + `/artists/{id}/tracks`)
+  и `GET /v1/album?id=` (`/albums/{id}/with-tracks`, треки из `volumes`);
+  ответы `{artist|album, tracks}`. `station_start {station}` ходит в
+  `/rotor/station/{station}/tracks` (`track:<id>` / `artist:<id>`), берёт
+  `radioSessionId`, заменяет очередь и включает первый трек; дальше работает
+  существующий `wave_more`.
+- UI: диалоги «Исполнитель» и «Альбом» с обложкой, списком треков и кнопками
+  «Станция»/«Играть»; меню трека — «Перейти к исполнителю», «Перейти к
+  альбому», «Станция по треку», «Станция по исполнителю».
+- В меню добавлен пункт «Информация о треке»: диалог с обложкой, названием,
+  исполнителями, альбомом, длительностью, ID трека/исполнителя/альбома,
+  состоянием кэша и лайка; для играющего трека — текущий поток
+  (`Format.streamLabel`).
+
+## Иконка приложения (2026-11-14)
+
+- `app/icons/ymd-qt.svg` — тёмный круг, белая стилизованная «Я» и play внутри
+  чаши; ставится в `hicolor/scalable/apps`, `ymd-qt.desktop` использует
+  `Icon=ymd-qt`.
+- `main.cpp` и `tray.cpp` берут `QIcon::fromTheme("ymd-qt")`; на планшете
+  иконка видна в заголовке окна и в панели задач (скриншот
+  `/tmp/ymd-icon-ui.png`). Плазмоид не менялся.

@@ -5,15 +5,21 @@
 
 mod api;
 mod auth;
-mod doctor;
-mod httpd;
-mod media;
-mod mpris;
-mod oauth;
 mod cache;
 mod config;
-mod player;
+mod doctor;
+mod httpd;
+mod logging;
+mod media;
+#[cfg(target_os = "linux")]
+mod mpris;
+#[cfg(not(target_os = "linux"))]
+#[path = "mpris_stub.rs"]
+mod mpris;
+#[cfg(target_os = "linux")]
 mod mpris_server;
+mod oauth;
+mod player;
 mod session;
 mod state;
 
@@ -59,6 +65,18 @@ enum Command {
         /// lossless | hq | nq | lq
         value: Option<String>,
     },
+    /// Показать хвост лога демона (по умолчанию последние 100 строк).
+    Logs {
+        /// Сколько строк показать.
+        #[arg(short = 'n', long, default_value_t = 100)]
+        lines: usize,
+        /// Ждать новых строк, как `tail -f`.
+        #[arg(short = 'f', long)]
+        follow: bool,
+        /// Только путь к файлу.
+        #[arg(long)]
+        path: bool,
+    },
     /// Отправить команду запущенному демону.
     Ctl {
         /// toggle | play | pause | next | prev | like | mode
@@ -97,6 +115,15 @@ enum Command {
     Cache {
         #[command(subcommand)]
         cmd: CacheCommand,
+    },
+    /// Текст песни (LRC с таймкодами или чистый текст).
+    Lyrics {
+        id: u64,
+        /// Чистый текст без таймкодов.
+        #[arg(long)]
+        text: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Метаданные трека.
     Track {
@@ -155,12 +182,11 @@ enum AuthCommand {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    let command = Cli::parse().command;
+    // Демон пишет ещё и в файл, короткие CLI-команды — только в stderr.
+    logging::init(matches!(command, Command::Serve { .. }));
 
-    match Cli::parse().command {
+    match command {
         Command::Serve { port } => {
             let key = session::ensure_key()?;
             let app = match player::Player::new() {
@@ -170,18 +196,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     AppState::new()
                 }
             };
+            app.restore_state();
             app.spawn_ticker();
-            let mpris_app = app.clone();
-            tokio::spawn(async move {
-                match mpris_server::serve(mpris_app).await {
-                    Ok(connection) => {
-                        // Держим соединение живым: при drop шина отпускает имя.
-                        let _connection = connection;
-                        std::future::pending::<()>().await;
+            #[cfg(target_os = "linux")]
+            {
+                let mpris_app = app.clone();
+                tokio::spawn(async move {
+                    match mpris_server::serve(mpris_app).await {
+                        Ok(connection) => {
+                            // Держим соединение живым: при drop шина отпускает имя.
+                            let _connection = connection;
+                            std::future::pending::<()>().await;
+                        }
+                        Err(err) => tracing::warn!("mpris недоступен: {err}"),
                     }
-                    Err(err) => tracing::warn!("mpris недоступен: {err}"),
-                }
-            });
+                });
+            }
             httpd::serve(app, port, key).await
         }
         Command::SessionKey => {
@@ -202,7 +232,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 None => {
                     let cfg = config::load();
-                    let fallback = if cfg.playback.fallback_hq { "да" } else { "нет" };
+                    let fallback = if cfg.playback.fallback_hq {
+                        "да"
+                    } else {
+                        "нет"
+                    };
                     println!("качество: {}", cfg.playback.quality);
                     println!("фоллбэк в hq: {fallback}");
                 }
@@ -210,6 +244,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Command::Ctl { op, port } => ctl(&op, port),
+        Command::Logs {
+            lines,
+            follow,
+            path,
+        } => logs_cmd(lines, follow, path),
         Command::Auth { cmd } => auth_cmd(cmd).await,
         Command::Search { text, page, json } => search_cmd(&text, page, json).await,
         Command::Download { id, quality, json } => download_cmd(id, &quality, json).await,
@@ -223,20 +262,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(())
         }
+        Command::Lyrics { id, text, json } => lyrics_cmd(id, text, json).await,
         Command::Track { id, json } => track_cmd(id, json).await,
-        Command::Stream {
-            id,
-            quality,
-            quiet,
-        } => stream_cmd(id, &quality, quiet).await,
+        Command::Stream { id, quality, quiet } => stream_cmd(id, &quality, quiet).await,
     }
 }
 
-async fn search_cmd(
-    text: &str,
-    page: u32,
-    json: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn logs_cmd(lines: usize, follow: bool, path_only: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let path = logging::path();
+    if path_only {
+        println!("{}", path.display());
+        return Ok(());
+    }
+    if !path.exists() {
+        eprintln!("лога ещё нет: {}", path.display());
+        eprintln!("демон пишет его после запуска: systemctl --user restart ymd");
+        return Ok(());
+    }
+    println!("# {}", path.display());
+    if follow {
+        logging::follow(lines)?;
+    } else {
+        println!("{}", logging::tail(lines)?);
+    }
+    Ok(())
+}
+
+async fn lyrics_cmd(id: u64, plain: bool, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let client = api::Client::from_store()?;
+    let format = if plain {
+        api::LyricsFormat::Text
+    } else {
+        api::LyricsFormat::Lrc
+    };
+    let lyrics = client.lyrics(id, format).await?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "id": id,
+                "format": lyrics.format,
+                "text": lyrics.text,
+                "writers": lyrics.writers,
+                "lyricId": lyrics.lyric_id,
+                "major": lyrics.major,
+            })
+        );
+        return Ok(());
+    }
+
+    println!("{}", lyrics.text.trim_end());
+    if !lyrics.writers.is_empty() {
+        eprintln!("авторы: {}", lyrics.writers.join(", "));
+    }
+    Ok(())
+}
+
+async fn search_cmd(text: &str, page: u32, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let client = api::Client::from_store()?;
     let value = client.search(text, page).await?;
 
@@ -294,11 +377,7 @@ async fn download_cmd(
         .unwrap_or(value);
     let track = state::track_from_value(&item)?;
 
-    eprintln!(
-        "скачиваем: {} — {}",
-        track.title,
-        track.artist_line()
-    );
+    eprintln!("скачиваем: {} — {}", track.title, track.artist_line());
 
     let mut last_decile = 0u64;
     let entry = cache::download(&client, &track, quality, |done, total| {
@@ -308,7 +387,12 @@ async fn download_cmd(
         let decile = done * 10 / total;
         if decile != last_decile || done == total {
             last_decile = decile;
-            eprint!("\r  {:>3}% {:>6.1} / {:.1} МиБ", done * 100 / total, done as f64 / 1048576.0, total as f64 / 1048576.0);
+            eprint!(
+                "\r  {:>3}% {:>6.1} / {:.1} МиБ",
+                done * 100 / total,
+                done as f64 / 1048576.0,
+                total as f64 / 1048576.0
+            );
             let _ = std::io::Write::flush(&mut std::io::stderr());
         }
     })
@@ -362,7 +446,13 @@ async fn download_album_cmd(id: u64, quality: &str) -> Result<(), Box<dyn std::e
 
     for (index, track) in tracks.iter().enumerate() {
         if cache::path_for(&track.id).is_some() {
-            println!("[{}/{}] уже скачан: {} — {}", index + 1, tracks.len(), track.title, track.artist_line());
+            println!(
+                "[{}/{}] уже скачан: {} — {}",
+                index + 1,
+                tracks.len(),
+                track.title,
+                track.artist_line()
+            );
             continue;
         }
         match cache::download(&client, track, quality, |_, _| {}).await {
@@ -376,7 +466,12 @@ async fn download_album_cmd(id: u64, quality: &str) -> Result<(), Box<dyn std::e
             ),
             Err(err) => {
                 failed += 1;
-                eprintln!("[{}/{}] ошибка {}: {err}", index + 1, tracks.len(), track.title);
+                eprintln!(
+                    "[{}/{}] ошибка {}: {err}",
+                    index + 1,
+                    tracks.len(),
+                    track.title
+                );
             }
         }
     }
@@ -448,10 +543,7 @@ async fn track_cmd(id: u64, json: bool) -> Result<(), Box<dyn std::error::Error>
         return Ok(());
     }
 
-    let title = value
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("—");
+    let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("—");
     let artists: Vec<&str> = value
         .get("artists")
         .and_then(|v| v.as_array())
@@ -467,19 +559,22 @@ async fn track_cmd(id: u64, json: bool) -> Result<(), Box<dyn std::error::Error>
         .unwrap_or(0);
 
     println!("{title} — {}", artists.join(", "));
-    println!("duration {}:{:02}", duration / 60000, (duration / 1000) % 60);
+    println!(
+        "duration {}:{:02}",
+        duration / 60000,
+        (duration / 1000) % 60
+    );
     println!(
         "available {}",
-        value.get("available").and_then(|v| v.as_bool()).unwrap_or(false)
+        value
+            .get("available")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     );
     Ok(())
 }
 
-async fn stream_cmd(
-    id: u64,
-    quality: &str,
-    quiet: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn stream_cmd(id: u64, quality: &str, quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
     let quality = api::Quality::parse(quality).unwrap_or(api::Quality::Nq);
     let client = api::Client::from_store()?;
     let stream = client.stream(id, quality).await?;
@@ -506,7 +601,10 @@ async fn auth_cmd(cmd: AuthCommand) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         AuthCommand::Login { no_wait } => {
             let code = oauth::request_device_code().await?;
-            println!("Откройте {} и введите код: {}", code.verification_url, code.user_code);
+            println!(
+                "Откройте {} и введите код: {}",
+                code.verification_url, code.user_code
+            );
             println!("(код действует {} мин)", code.expires_in / 60);
 
             if no_wait {
@@ -569,7 +667,10 @@ async fn auth_cmd(cmd: AuthCommand) -> Result<(), Box<dyn std::error::Error>> {
                 saved.login, saved.uid, saved.has_plus, saved.backend
             );
             if saved.backend == "file" {
-                println!("внимание: keyring недоступен, токен лежит в {} (0600)", auth::file_token_path().display());
+                println!(
+                    "внимание: keyring недоступен, токен лежит в {} (0600)",
+                    auth::file_token_path().display()
+                );
             }
             Ok(())
         }
@@ -594,7 +695,14 @@ async fn auth_cmd(cmd: AuthCommand) -> Result<(), Box<dyn std::error::Error>> {
         }
         AuthCommand::Logout => {
             let removed = auth::logout()?;
-            println!("{}", if removed { "токен удалён" } else { "нечего удалять" });
+            println!(
+                "{}",
+                if removed {
+                    "токен удалён"
+                } else {
+                    "нечего удалять"
+                }
+            );
             Ok(())
         }
     }

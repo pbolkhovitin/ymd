@@ -74,8 +74,8 @@
 | `src/ymdclient.{h,cpp}` | ключ, HTTP/JSON, polling, команды, поиск, плейлисты, кэш, 401-retry |
 | `src/tray.{h,cpp}` | `KStatusNotifierItem`: окно, play/pause, next/prev, выход |
 | `src/main.cpp` | `QApplication`, тема KDE, связка QML ↔ клиент ↔ трей |
-| `qml/Main.qml` | окно: обложка, seek, громкость, транспорт, режимы, поиск, очередь, плейлисты, кэш |
-| `qml/TrackRow.qml` | строка трека с кнопкой скачивания |
+| `qml/Main.qml` | окно: обложка, транспорт, поиск, очередь (drag&drop), плейлисты (создание/поиск/удаление), кэш, кодек/битрейт |
+| `qml/TrackRow.qml` | строка трека: скачивание, контекстное меню, drag&drop |
 | `qml/format.js` | общие функции форматирования, включая размеры кэша |
 
 Приложение — тонкий клиент: не хранит токен и не обращается к API Яндекса.
@@ -111,8 +111,24 @@
 | GET | `/v1/health` | `{ok, version, uptime}` без ключа |
 | GET | `/v1/state` | снимок состояния |
 | GET | `/v1/search?q=&page=` | поиск, `{query, tracks: [...]}` |
+| GET | `/v1/lyrics?id=&format=lrc\|text` | текст песни, `{text, writers, major}` |
 | GET | `/v1/playlists` | плейлисты пользователя, `{playlists: [...]}` |
 | GET | `/v1/playlist?uid=&kind=` | плейлист и треки, `{playlist, tracks: [...]}` |
+| GET | `/v1/album?id=` | альбом и треки (volumes сплющены), `{album, tracks}` |
+| GET | `/v1/artist?id=&page=` | артист и его треки, `{artist, tracks}` |
+| GET | `/v1/favorites` | «Мне нравится» (`kind = 3`): `{playlist, tracks}` |
+| GET | `/v1/home` | блоки главной: `{blocks: [{id, title, type, items}]}` |
+| GET | `/v1/discovery/metatags` | группы подборок: `{groups: [{id, title, tags: [{tag, title, children}]}]}` |
+| GET | `/v1/discovery/genres` | жанры и поджанры, `station` для радио |
+| GET | `/v1/discovery/tag?tag=` | плейлисты тега + `station` |
+| POST | `/v1/radio` | `{station}` — запустить радио (`genre:rock`, `mood:calm`, `artist:42`) |
+| GET | `/v1/config` | эффективные настройки демона |
+| PATCH | `/v1/config` | `{quality?, fallbackHq?, cacheLimitMb?}` |
+| GET | `/v1/account` | `{login, uid, plus, backend, savedAt}` или 401 |
+| POST | `/v1/auth/device` | начать вход по Device Flow: `{state, userCode, url, expiresIn}` |
+| GET | `/v1/auth/device` | состояние входа (`pending/authorized/expired/…`) |
+| DELETE | `/v1/auth/device` | отменить ожидание |
+| POST | `/v1/auth/logout` | удалить токен и метаданные аккаунта |
 | GET | `/v1/cache` | `{items, totalBytes, limitBytes, dir}` |
 | POST | `/v1/cmd` | `{op, payload}` — команда |
 | GET | `/v1/events` | SSE: события состояния (использует `bridge.luau`) |
@@ -131,15 +147,17 @@
   "positionMs": 61000,
   "volume": 0.8,
   "queue": {
-    "items": [{"id": "…", "title": "…", "artists": ["…"], "durationMs": 184000, "cover": "…", "cached": false}],
+    "items": [{"id": "…", "title": "…", "artists": ["…"], "albumId": "456", "durationMs": 184000, "liked": false, "cover": "…", "cached": false}],
     "length": 32, "index": 3, "shuffle": false, "repeat": "all"
   },
   "downloads": [
     {"id": "…", "title": "…", "state": "downloading", "bytes": 1048576, "total": 3993120, "error": null}
   ],
+  "downloadPending": 12,
   "wave": {"sessionId": "…", "batchId": "…", "active": true},
   "quality": "lossless",
   "codec": "flac-mp4",
+  "bitrateKbps": 1411,
   "env": {"fullscreen": false, "overview": false, "idle": false, "onBattery": false},
   "ui": {"mode": "full"}
 }
@@ -152,26 +170,30 @@
 `toggle`, `play`, `pause`, `stop`, `next`, `prev`, `like`, `wave_stop`, `wave`,
 `quality{value}`, `mode{value}`, `play_track{...track}`, `enqueue{...track}`,
 `queue_play{index}`, `queue_set{tracks,index,play}`, `queue_clear`,
-`queue_remove{index}`, `volume{value}`, `seek{positionMs}`, `repeat{value}`,
-`shuffle{value}`, `download_track{track}`, `cache_remove{id}`, `cache_clear`,
-`cache_limit{limitMb}`.
+`queue_remove{index}`, `queue_move{from,to}`, `volume{value}`, `seek{positionMs}`,
+`repeat{value}`, `shuffle{value}`, `station_start{station}`,
+`download_track{track}`, `download_tracks{tracks}`, `cache_remove{id}`,
+`cache_clear`, `cache_limit{limitMb}`, `playlist_create{title,visibility}`,
+`playlist_delete{kind}`, `playlist_add_tracks{kind,tracks}`,
+`playlist_remove_track{kind,index}`, `like_track{id,liked}`.
 
 Асинхронные (резолвят поток через API): `wave_start`, `wave_more`,
 `wave_feedback{kind, trackId?}`, `download_track` (загрузка идёт в фоне,
-прогресс — в `state.downloads`).
+прогресс — в `state.downloads`), операции с плейлистами (сначала получают
+актуальный `revision`).
 
-Ответ: `{ok, rev}`. Плазмоид после успешной команды сразу перечитывает
+Ответ: `{ok, rev}`. Клиенты после успешной команды сразу перечитывают
 `/v1/state`.
 
 ## Потоки
 
-**Play/pause.** Плазмоид → `POST /v1/cmd {op:"toggle"}` → демон меняет
+**Play/pause.** Любой клиент (плазмоид, `ymd-qt`, панель Noctalia) → `POST /v1/cmd {op:"toggle"}` → демон меняет
 GStreamer → MPRIS `PlaybackStatus` → следующий polling забирает `state`.
 
 **Смена трека.** GStreamer EOS → тикер зовёт `next` → `api::stream` резолвит URL
 (или локальный кэш) → `playbin3.set_uri` → MPRIS `Metadata` обновляется.
 
-**Поиск.** Плазмоид → `GET /v1/search?q=…` → демон подписывает запрос и ходит в
+**Поиск.** Клиент → `GET /v1/search?q=…` → демон подписывает запрос и ходит в
 API → `{tracks}` → четыре строки в попапе.
 
 **Офлайн.** `ymd download` или кнопка `⤓` в UI → `download_track` → `encraw`-чанки

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. packaging/container-env.sh
 
 arch=amd64
 while [ $# -gt 0 ]; do
@@ -18,10 +19,9 @@ esac
 
 cache_root="${YMD_QT_CACHE_ROOT:-/var/tmp/opencode/ymd-qt-cache}"
 mkdir -p "$cache_root/build-$arch" dist
-docker build --platform "$platform" -f packaging/Dockerfile.qt \
+"$ENGINE_BIN" build --platform "$platform" -f packaging/Dockerfile.qt \
   -t "ymd-qt-builder:$arch" packaging
-docker run --rm --platform "$platform" \
-  -u "$(id -u):$(id -g)" -e HOME=/tmp \
+"$ENGINE_BIN" run --rm --platform "$platform" "${RUN_USER[@]}" -e HOME=/tmp \
   -e YMD_QT_BUILD_DIR="/cache/build-$arch" \
   -v "$cache_root:/cache" \
   -v "$PWD:/work" -w /work \

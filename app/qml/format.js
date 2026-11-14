@@ -48,6 +48,41 @@ function qualityNext(quality) {
     }
 }
 
+function codecLabel(codec) {
+    switch (String(codec || "")) {
+    case "flac-mp4":
+        return "FLAC";
+    case "aac256-mp4":
+        return "AAC 256";
+    case "aac-mp4":
+        return "AAC";
+    case "he-aac-mp4":
+        return "HE-AAC";
+    case "mp3":
+        return "MP3";
+    case "":
+        return "";
+    default:
+        return String(codec).toUpperCase();
+    }
+}
+
+function streamLabel(quality, codec, bitrateKbps) {
+    var label = codecLabel(codec) || qualityLabel(quality);
+    var kbps = Number(bitrateKbps || 0);
+    if (kbps > 0) {
+        label += " · " + Math.round(kbps) + " kbps";
+    } else {
+        // API не всегда отдаёт битрейт; для lossy-профилей показываем
+        // номинальный битрейт с явным «~».
+        var nominal = quality === "hq" ? 256 : (quality === "nq" ? 192 : (quality === "lq" ? 64 : 0));
+        if (nominal > 0) {
+            label += " · ~" + nominal + " kbps";
+        }
+    }
+    return label;
+}
+
 function repeatNext(mode) {
     switch (mode) {
     case "off":
@@ -95,6 +130,8 @@ if (typeof module !== "undefined" && module.exports) {
         formatTime: formatTime,
         qualityLabel: qualityLabel,
         qualityNext: qualityNext,
+        codecLabel: codecLabel,
+        streamLabel: streamLabel,
         repeatNext: repeatNext,
         bytes: bytes,
         trackLine: trackLine,

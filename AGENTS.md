@@ -14,22 +14,26 @@
 5. `docs/11-qt-app.md` — отдельное приложение.
 6. `docs/design/ui-rules.md` → `docs/design/plasma.md` / `docs/design/noctalia.md`.
 7. `docs/07-roadmap.md` — что дальше.
-8. `notes/kde-port-findings.md` — факты порта и грабли; `notes/design-audit.md` — аудит панели Noctalia.
+8. `docs/13-versioning.md` — версии, теги и релизы; `docs/14-macos.md` — macOS;
+   `docs/15-macos-brief.md` — бриф для контрибьютора по `/macos/`; `CHANGELOG.md`.
+9. `notes/kde-port-findings.md` — факты порта и грабли; `notes/design-audit.md` — аудит панели Noctalia.
 
 ## Состояние кода
 
 | Путь | Что | Статус |
 |---|---|---|
 | `daemon/src/main.rs` | CLI: `serve`, `session-key`, `doctor`, `status`, `ctl`, … | готов |
-| `daemon/src/httpd.rs` | `/v1/health`, `/v1/state`, `/v1/search`, `/v1/cmd`, `/v1/events` | готов |
+| `daemon/src/httpd.rs` | `/v1/*`: состояние, поиск, главная, discovery, радио, лайки, config, auth | готов |
 | `daemon/src/state.rs` | состояние плеера, очередь, команды, волна | готов |
 | `daemon/src/session.rs` | capability-ключ `0600`, `ymd session-key` | готов |
 | `daemon/src/player.rs` | GStreamer `playbin3` → PipeWire | готов |
 | `daemon/src/mpris_server.rs` | исходящий MPRIS (zbus) | готов |
-| `daemon/src/mpris.rs` | внешний MPRIS через `playerctl` (резерв) | готов |
+| `daemon/src/mpris.rs` | внешний MPRIS через `playerctl` (резерв, Linux) | готов |
+| `daemon/src/mpris_stub.rs` | заглушка MPRIS для macOS | готов |
 | `daemon/src/cache.rs` | офлайн-кэш `encraw` + AES-CTR | готов |
 | `daemon/src/api.rs` | HTTP-клиент API, поток, поиск, волна | готов |
 | `daemon/src/doctor.rs` | проверка окружения (`ymd doctor`), KDE/apt | готов |
+| `daemon/src/logging.rs` | файл лога `~/.local/state/ymd/ymd.log`, `ymd logs` | готов |
 | `plasmoid/contents/ui/main.qml` | ключ, polling, команды, поиск | готов |
 | `plasmoid/contents/ui/CompactRepresentation.qml` | компакт в панели | готов |
 | `plasmoid/contents/ui/FullRepresentation.qml` | попап: обложка, seek, транспорт, поиск, очередь | готов |
@@ -41,8 +45,13 @@
 | `noctalia/panel.luau` | панель Noctalia: шапка, прогресс, транспорт, поиск, очередь | готов |
 | `noctalia/bridge.luau` | фоновая SSE-подписка | готов |
 | `scripts/install-noctalia.sh` | симлинк плагина в Noctalia + reload | готов |
-| `packaging/` | Docker, `.deb`, systemd unit | готов |
+| `scripts/version.sh` | версии: `--check`, `--bump`, `--tag` | готов |
+| `macos/` | `ymd-menubar` (SwiftUI), `build-dmg.sh`, сборка демона под Apple Silicon | готов |
+| `packaging/` | Docker, `.deb`, `.rpm`, systemd unit | готов |
 | `scripts/` | сборка, установка, проверки | готов |
+| `.github/workflows/ci.yml` | версии, доки, тесты, архив плагина; ручной прогон `.rpm` | готов |
+| `.github/workflows/release.yml` | тег `v*` → `.deb`/`.rpm` + GitHub Release | готов |
+| `.github/workflows/macos-release.yml` | вручную: `.dmg` + tar.gz демона arm64 к релизу | готов |
 
 ## Ограничения окружения агента
 
@@ -56,15 +65,33 @@
 
 ## Публикация
 
-Репозиторий: `git@github.com:pbolkhovitin/ym-noctalia.git` (private).
+Репозиторий: `git@github.com:pbolkhovitin/ymd.git` (public, MIT).
+Прежнее имя `ym-noctalia` — GitHub редиректит старые ссылки.
 После каждого завершённого этапа — коммит + `git push`.
 
 Перед пушем: gitleaks в Docker:
 
 ```bash
-docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+docker run --rm -v "$PWD:/repo" docker.io/zricethezav/gitleaks:latest \
   detect --source /repo --no-banner
 ```
+
+Если Docker не видит каталог (CIFS, rootless) — локальный бинарь:
+`gitleaks detect --no-banner --redact`.
+
+### Релиз
+
+Версия одна на весь проект, источник истины — `Cargo.toml`
+(`[workspace.package]`); манифесты синхронизируются только скриптом.
+Тег — `vMAJOR.MINOR.PATCH`, релиз собирает `release.yml` по тегу.
+
+```bash
+bash scripts/version.sh --bump patch       # версия + раздел в CHANGELOG
+git commit -am "chore(release): X.Y.Z" && git push origin main
+bash scripts/version.sh --tag && git push origin vX.Y.Z
+```
+
+Подробности — `docs/13-versioning.md`, история — `CHANGELOG.md`.
 
 ## Документация обновляется автоматически
 
@@ -78,8 +105,16 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 3. `notes/<тема>-findings.md` — что проверено живьём, цифры, грабли.
 4. `AGENTS.md` — таблица состояния и «Следующий шаг».
 5. `docs/07-roadmap.md` — статус этапа.
-6. `bash scripts/docs-check.sh` — скрипт должен выдать `ok`.
-7. gitleaks → `git commit` → `git push`.
+6. `bash scripts/docs-check.sh` — должен выдать `ok`. Проверяет: маркеры
+   устаревания, отставание доков от **исходников** (`daemon`, `plasmoid`,
+   `app`, `noctalia`; изменения в `packaging`, `scripts`, `.github` —
+   подсказка, не блокер), модули без упоминания, **каждый
+   маршрут `/v1/*` из `httpd.rs`**, совпадение копий `format.js`
+   (`plasmoid/contents/ui/format.js` ↔ `app/qml/format.js`) и **версии
+   в четырёх манифестах** (`scripts/version.sh --check`).
+7. `CHANGELOG.md` — пункт в `[Unreleased]`; версия — только через
+   `scripts/version.sh --bump`.
+8. gitleaks → `git commit` → `git push`.
 
 Правило факта: в `docs/` попадает только проверенное на хосте; догадки живут
 в `notes/` с пометкой «гипотеза». Устаревшие обещания удаляются, а не остаются
@@ -107,12 +142,20 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
 
 ## Следующий шаг
 
-1. **Noctalia-панель**: обложка (`cover` в `/v1/state` приходит null), артист в
-   баре (хост режет ~22 символа), различимость паузы в баре, err/loading.
-2. **Тексты песен**: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics`, кнопка в
-   попапе (разведка — `notes/lyrics-findings.md`).
-3. **Докачка после обрыва**: `.part` + `Range`, не начинать с нуля.
+1. **Бар Noctalia**: артист теряется (хост режет ~22 символа), play/pause
+   неразличимы (статичный глиф). Переподключение после рестарта демона
+   исправлено (`rev` не монотонен, 3 ошибки до «off»), `ymd doctor` ловит
+   висячий симлинк плагина. Диагностика очереди — `ymd logs`,
+   `notes/logging-findings.md`, `notes/noctalia-ui-findings.md`.
+2. **Тексты песен — ✅ демон, CLI, Noctalia.** Плазмоид и `ymd-qt` кнопку ещё
+   не имеют: `api::lyrics()`, `GET /v1/lyrics`, `ymd lyrics` готовы.
+3. **Докачка после обрыва — ✅ `.part` + `Range` + отпечаток ключа.**
+   Проверено: обрыв на 41 % → продолжение с 14 МиБ и успешное завершение.
 4. **Ynison**: WebSocket-синхронизация между устройствами (опционально).
+
+UI discovery и вход в Noctalia-панели готовы: `docs/design/noctalia.md`
+(виды и источники), `notes/noctalia-ui-findings.md` (грабли Yoga и Luau).
+Plasma и `ymd-qt` — зона Леонида, этапы 5 и 7 в `docs/12-discovery-account.md`.
 
 Ограничение `ymd-qt`: меню трея на Wayland может не открываться при вызове
 через DBus (`ContextMenu` без input serial); клик по иконке и средняя кнопка

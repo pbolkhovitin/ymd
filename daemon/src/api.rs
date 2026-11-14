@@ -36,7 +36,7 @@ pub struct Client {
 }
 
 impl Client {
-    #[allow(dead_code)] // album/artist/playlists/likes — для M2
+    #[allow(dead_code)] // конструктор для CLI-команд и тестов
     pub fn new(token: String) -> Result<Self, ApiError> {
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
@@ -105,6 +105,132 @@ impl Client {
         }
 
         Ok(response.json().await?)
+    }
+
+    /// POST с form-urlencoded телом. Так работают плейлисты и лайки.
+    async fn post_form(&self, path: &str, form: &[(&str, String)]) -> Result<Value, ApiError> {
+        let response = self
+            .http
+            .post(format!("{BASE_URL}{path}"))
+            .header("authorization", format!("OAuth {}", self.token))
+            .header("x-yandex-music-client", CLIENT_HEADER)
+            .header("accept-language", "ru")
+            .form(form)
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: body.chars().take(200).collect(),
+            });
+        }
+        Ok(serde_json::from_str(&body).unwrap_or(Value::Null))
+    }
+
+    /// Создание плейлиста. `visibility`: `public` или `private`.
+    pub async fn create_playlist(
+        &self,
+        uid: u64,
+        title: &str,
+        visibility: &str,
+    ) -> Result<Value, ApiError> {
+        let value = self
+            .post_form(
+                &format!("/users/{uid}/playlists/create"),
+                &[
+                    ("title", title.to_string()),
+                    ("visibility", visibility.to_string()),
+                ],
+            )
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Удаление плейлиста.
+    pub async fn delete_playlist(&self, uid: u64, kind: u64) -> Result<Value, ApiError> {
+        self.post_form(&format!("/users/{uid}/playlists/{kind}/delete"), &[])
+            .await
+    }
+
+    /// Изменение плейлиста через diff-операции.
+    pub async fn change_playlist(
+        &self,
+        uid: u64,
+        kind: u64,
+        revision: u64,
+        diff: &str,
+    ) -> Result<Value, ApiError> {
+        let value = self
+            .post_form(
+                &format!("/users/{uid}/playlists/{kind}/change"),
+                &[
+                    ("kind", kind.to_string()),
+                    ("revision", revision.to_string()),
+                    ("diff", diff.to_string()),
+                ],
+            )
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Поставить или снять лайк трека.
+    pub async fn like_track(&self, uid: u64, track_id: &str, liked: bool) -> Result<(), ApiError> {
+        let action = if liked { "add-multiple" } else { "remove" };
+        self.post_form(
+            &format!("/users/{uid}/likes/tracks/{action}"),
+            &[("track-ids", track_id.to_string())],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Блоки главной страницы.
+    pub async fn landing(&self) -> Result<Value, ApiError> {
+        // `blocks` обязателен: без него API отвечает ошибкой валидации.
+        const BLOCKS: &str =
+            "personal-playlists,promotions,new-releases,new-playlists,mixes,chart,albums,playlists";
+        self.get("/landing3", &[("blocks", BLOCKS.to_string())])
+            .await
+    }
+
+    /// Дерево метатегов: настроения, занятия, жанры, эпохи.
+    pub async fn metatags(&self) -> Result<Value, ApiError> {
+        self.get("/landing3/metatags", &[]).await
+    }
+
+    /// Жанры с поджанрами и иконками.
+    pub async fn genres(&self) -> Result<Value, ApiError> {
+        self.get("/genres", &[]).await
+    }
+
+    /// Страница тега: плейлисты и `stationId` для радио.
+    pub async fn metatag_playlists(&self, tag: &str) -> Result<Value, ApiError> {
+        let encoded = encode_segment(tag);
+        self.get(&format!("/metatags/{encoded}/playlists"), &[])
+            .await
+    }
+
+    /// Новая ротор-сессия для станции (`genre:rock`, `mood:calm`, `artist:42`).
+    pub async fn station_start(&self, station: &str) -> Result<WaveBatch, ApiError> {
+        let value = self
+            .post_json("/rotor/session/new", &json!({ "station": station }))
+            .await?;
+        let result = value.get("result").unwrap_or(&value);
+        Ok(WaveBatch {
+            session_id: result
+                .get("radioSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            batch_id: result
+                .get("batchId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tracks: collect_sequence(result),
+        })
     }
 
     /// Новая сессия «Моей волны».
@@ -187,9 +313,7 @@ impl Client {
 
     #[allow(dead_code)]
     pub async fn album(&self, id: &str) -> Result<Value, ApiError> {
-        let value = self
-            .get(&format!("/albums/{id}/with-tracks"), &[])
-            .await?;
+        let value = self.get(&format!("/albums/{id}/with-tracks"), &[]).await?;
         Ok(unwrap_result(value))
     }
 
@@ -197,6 +321,37 @@ impl Client {
     pub async fn artist(&self, id: &str) -> Result<Value, ApiError> {
         let value = self.get(&format!("/artists/{id}/info"), &[]).await?;
         Ok(unwrap_result(value))
+    }
+
+    /// Треки исполнителя для встроенного перехода.
+    pub async fn artist_tracks(&self, id: &str, page: u32) -> Result<Value, ApiError> {
+        let value = self
+            .get(
+                &format!("/artists/{id}/tracks"),
+                &[("page", page.to_string()), ("page-size", "50".to_string())],
+            )
+            .await?;
+        Ok(unwrap_result(value))
+    }
+
+    /// Станция по треку/исполнителю: `track:<id>` или `artist:<id>`.
+    pub async fn station_tracks(&self, station: &str) -> Result<WaveBatch, ApiError> {
+        let value = self
+            .get(&format!("/rotor/station/{station}/tracks"), &[])
+            .await?;
+        let result = value.get("result").unwrap_or(&value);
+        Ok(WaveBatch {
+            session_id: result
+                .get("radioSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            batch_id: result
+                .get("batchId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tracks: collect_sequence(result),
+        })
     }
 
     pub async fn playlists(&self, uid: u64) -> Result<Value, ApiError> {
@@ -309,16 +464,16 @@ impl Client {
                 .and_then(Value::as_str)
                 .unwrap_or("raw")
                 .to_string(),
-            key: info
-                .get("key")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            key: info.get("key").and_then(Value::as_str).map(str::to_string),
             codec: info
                 .get("codec")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
-            bitrate: info.get("bitrate").and_then(Value::as_u64),
+            bitrate: info
+                .get("bitrate")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0),
         })
     }
 
@@ -375,7 +530,8 @@ impl Client {
         );
 
         let entries = value.as_array().cloned().unwrap_or_default();
-        let entry = pick_entry(&entries, quality).ok_or(ApiError::NoStream(track_id.to_string()))?;
+        let entry =
+            pick_entry(&entries, quality).ok_or(ApiError::NoStream(track_id.to_string()))?;
 
         let info_url = entry
             .get("downloadInfoUrl")
@@ -529,6 +685,19 @@ pub struct WaveBatch {
 }
 
 /// Достаёт треки из `result.sequence` — элементы бывают `{"type":"track","track":{…}}`.
+fn encode_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 fn collect_sequence(result: &Value) -> Vec<Value> {
     result
         .get("sequence")
@@ -540,6 +709,114 @@ fn collect_sequence(result: &Value) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Формат текста песни.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LyricsFormat {
+    /// Чистый текст без таймкодов.
+    Text,
+    /// LRC с таймкодами `[mm:ss.xx]`.
+    Lrc,
+}
+
+impl LyricsFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "TEXT",
+            Self::Lrc => "LRC",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "text" | "plain" => Self::Text,
+            _ => Self::Lrc,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Lyrics {
+    pub text: String,
+    pub format: &'static str,
+    pub writers: Vec<String>,
+    pub lyric_id: Option<u64>,
+    pub major: Option<String>,
+}
+
+impl Client {
+    /// Текст песни: подписанный `/tracks/{id}/lyrics` → presigned S3 → сам текст.
+    ///
+    /// Подпись отличается от `file-info`: ключ windows, данные `trackId + ts`,
+    /// base64 полный (см. `notes/lyrics-findings.md`).
+    pub async fn lyrics(&self, track_id: u64, format: LyricsFormat) -> Result<Lyrics, ApiError> {
+        let ts = crate::media::now_ts();
+        let sign =
+            crate::media::sign_lyrics(crate::media::SecretKey::Windows.as_str(), track_id, ts);
+
+        let value = self
+            .get_with_client(
+                &format!("/tracks/{track_id}/lyrics"),
+                &[
+                    ("format", format.as_str().to_string()),
+                    ("timeStamp", ts.to_string()),
+                    ("sign", sign),
+                ],
+                crate::media::DESKTOP_CLIENT,
+            )
+            .await?;
+
+        let result = value.get("result").cloned().unwrap_or(Value::Null);
+        let url = result
+            .get("downloadUrl")
+            .and_then(Value::as_str)
+            .or_else(|| result.get("download_url").and_then(Value::as_str))
+            .ok_or_else(|| ApiError::Status {
+                status: 404,
+                body: "у трека нет текста".to_string(),
+            })?;
+
+        let text = self.fetch_text(url).await?;
+
+        let writers = result
+            .get("writers")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(Lyrics {
+            text,
+            format: format.as_str(),
+            writers,
+            lyric_id: result.get("lyricId").and_then(Value::as_u64),
+            major: result
+                .get("major")
+                .and_then(|major| major.get("prettyName"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+    }
+
+    /// GET по presigned-ссылке: без авторизации и без заголовков клиента.
+    async fn fetch_text(&self, url: &str) -> Result<String, ApiError> {
+        let response = self.http.get(url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: body.chars().take(200).collect(),
+            });
+        }
+        Ok(response.text().await?)
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,37 @@
+name: commit-identity
+
+# Один раз на клон: своё имя и noreply-адрес GitHub, иначе коммиты
+# привязываются к чужому аккаунту (GitHub сопоставляет по email автора).
+#
+#   git config --local user.name  "Leonid Yurasov"
+#   git config --local user.email "<ID>+leonidy-85@users.noreply.github.com"
+#
+# ID выдаётся в Settings → Emails → Keep my email addresses private.
+
+on:
+  pull_request:
+
+jobs:
+  author:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Автор каждого коммита — участник проекта
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -u
+          allowed='^(pbolkhovitin@yandex\.ru|([0-9]+\+)?(pbolkhovitin|leonidy-85|4epenaxa)@users\.noreply\.github\.com|4epenaxa@mail\.ru|41898282\+github-actions\[bot\]@users\.noreply\.github\.com)$'
+          bad=$(git log --format='%ae' "$BASE..HEAD" | sort -u | grep -vE "$allowed" || true)
+          if [ -n "$bad" ]; then
+            echo "Недопустимый автор коммита:"
+            printf '%s\n' "$bad" | sed 's/^/  /'
+            echo
+            echo "Настройте подпись в своём клоне (см. CONTRIBUTING.md)."
+            exit 1
+          fi
+          echo "авторы в порядке:"
+          git log --format='  %h %an <%ae>' "$BASE..HEAD"
