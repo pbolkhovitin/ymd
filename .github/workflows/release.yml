@@ -4,7 +4,7 @@ name: release
 #   1. release-PR поднимает версию и раздел CHANGELOG, проходит ревью;
 #   2. вручную: gh workflow run release.yml -f tag=vX.Y.Z
 #      (или push тега — аварийный путь);
-#   3. verify проверяет тег, версию, CHANGELOG, HEAD и docs-check;
+#   3. verify проверяет тег, версию, CHANGELOG, релизный коммит и docs-check;
 #   4. test и build собирают пакеты;
 #   5. publish ждёт approve environment `release`, создаёт тег и GitHub
 #      Release и прикладывает артефакты.

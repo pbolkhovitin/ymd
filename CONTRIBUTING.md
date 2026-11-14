@@ -98,9 +98,9 @@ environment `release` с обязательным approve и ruleset на тег
 
 ## Релиз
 
-Релиз делает мейнтейнер, порядок — `docs/13-versioning.md`. Версия и
-`CHANGELOG.md` идут отдельным release-PR, тег создаёт workflow после
-проверок и approve environment `release`:
+Релиз делает мейнтейнер, порядок — `docs/13-versioning.md`. Версия,
+`Cargo.lock` и `CHANGELOG.md` идут отдельным release-PR, тег создаёт
+workflow после проверок и approve environment `release`:
 
 ```bash
 bash scripts/release.sh prepare minor       # ветка release/vX.Y.Z + PR

@@ -15,6 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cargo_toml="Cargo.toml"
+lockfile="Cargo.lock"
 plugin_toml="noctalia/plugin.toml"
 metadata_json="plasmoid/metadata.json"
 cmake_lists="app/CMakeLists.txt"
@@ -38,6 +39,12 @@ read_cmake() {
   sed -n 's/^project(ymd-qt VERSION \([0-9][0-9.]*\).*/\1/p' "$cmake_lists" | head -n1
 }
 
+read_lock() {
+  [ -f "$lockfile" ] || return 0
+  sed -n '/^name = "ymd"$/,/^version = /p' "$lockfile" \
+    | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1
+}
+
 current() {
   local version
   version=$(read_cargo)
@@ -52,8 +59,8 @@ valid_version() {
 check() {
   local expected status=0
   expected=$(current)
-  local -a names=("$cargo_toml" "$plugin_toml" "$metadata_json" "$cmake_lists")
-  local -a values=("$expected" "$(read_plugin)" "$(read_metadata)" "$(read_cmake)")
+  local -a names=("$cargo_toml" "$lockfile" "$plugin_toml" "$metadata_json" "$cmake_lists")
+  local -a values=("$expected" "$(read_lock)" "$(read_plugin)" "$(read_metadata)" "$(read_cmake)")
   local i
 
   for i in "${!names[@]}"; do
@@ -116,6 +123,19 @@ set_version() {
     }
     { print }
   ' "$cmake_lists" | write_atomically "$cmake_lists"
+
+  # Cargo.lock хранит версию workspace-пакета: без этого `cargo build
+  # --locked` считает lock-файл устаревшим и падает на сборке пакетов.
+  if [ -f "$lockfile" ]; then
+    awk -v v="$version" '
+      found && /^version = "/ {
+        sub(/^version = ".*"/, "version = \"" v "\"")
+        found = 0
+      }
+      /^name = "ymd"$/ { found = 1 }
+      { print }
+    ' "$lockfile" | write_atomically "$lockfile"
+  fi
 
   note_changelog "$version"
   printf 'версия записана: %s\n' "$version"
