@@ -3,12 +3,15 @@
 #
 #   bash scripts/release.sh status
 #   bash scripts/release.sh prepare minor
+#   bash scripts/release.sh prepare auto    # bump по version-impact.sh
 #   bash scripts/release.sh check v0.3.0
 #   bash scripts/release.sh check --ci --require-main-head v0.3.0
 #   bash scripts/release.sh publish v0.3.0          # dry-run
 #   bash scripts/release.sh publish v0.3.0 --yes    # тег и релиз
 #
 # `prepare` создаёт ветку release/vX.Y.Z, коммит, пушит её и открывает PR.
+# `prepare auto` берёт major/minor/patch из scripts/version-impact.sh
+# (правила — docs/13-versioning.md).
 # Тег не ставится: сначала ревью, проверки и merge.
 #
 # `publish` запускает .github/workflows/release.yml. Workflow проверяет
@@ -25,12 +28,13 @@ usage() {
   cat <<'EOF'
 Использование:
   bash scripts/release.sh status
-  bash scripts/release.sh prepare major|minor|patch
+  bash scripts/release.sh prepare major|minor|patch|auto
   bash scripts/release.sh check vX.Y.Z
   bash scripts/release.sh check --ci [--require-main-head] vX.Y.Z
   bash scripts/release.sh publish vX.Y.Z [--yes] [--watch]
 
 prepare  — версия + CHANGELOG, ветка release/vX.Y.Z и PR; тег не ставится.
+           auto — bump выбирается по коммитам с последнего тега.
 check    — версия = тег, раздел CHANGELOG, [Unreleased] пуст, релизный
            коммит есть в истории HEAD, docs-check. --ci не требует чистого main.
 publish  — запуск release.yml; без --yes только проверки и сборка.
@@ -167,7 +171,12 @@ prepare_release() {
   local part="${1:-}"
   case "$part" in
     major|minor|patch) ;;
-    *) die "использование: $0 prepare major|minor|patch" ;;
+    auto)
+      part=$(bash scripts/version-impact.sh --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["bump"])')
+      [ "$part" = none ] && die "с последнего тега нет изменений, влияющих на версию"
+      say "авто-версия: $part (по version-impact.sh)"
+      ;;
+    *) die "использование: $0 prepare major|minor|patch|auto" ;;
   esac
 
   require_repo

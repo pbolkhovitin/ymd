@@ -55,7 +55,9 @@ workflow; новый участник добавляет свой туда же 
 - В `main` попадает **один коммит на PR**: включён squash-merge, ветка
   удаляется после мержа.
 - Перед PR: `bash scripts/docs-check.sh` (сверяет доки с кодом, маршруты `/v1/*`,
-  копии `format.js` и версии манифестов); для плагина —
+  копии `format.js` и версии манифестов), `bash scripts/docs-sync.sh --check`
+  (справочники маршрутов и полей состояния) и `bash scripts/version-impact.sh`
+  (какая цифра версии следует из изменений); для плагина —
   `noctalia plugins lint ./noctalia`; для демона — `cargo test`.
 - Оформление PR проверяет `pr-policy` (`scripts/pr-check.sh`): заголовок
   в стиле Conventional Commits (squash-merge берёт его как сообщение коммита
