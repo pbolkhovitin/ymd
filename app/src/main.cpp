@@ -18,6 +18,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("ymd-qt"));
     QApplication::setApplicationDisplayName(QStringLiteral("ymd"));
+    QApplication::setApplicationVersion(QStringLiteral(YMD_QT_VERSION));
     QApplication::setOrganizationName(QStringLiteral("pbolkhovitin"));
     QApplication::setDesktopFileName(QStringLiteral("io.github.pbolkhovitin.ymdqt"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("ymd-qt"), QIcon::fromTheme(QStringLiteral("audio-x-generic"))));

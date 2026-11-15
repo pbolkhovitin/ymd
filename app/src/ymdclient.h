@@ -34,6 +34,13 @@ class YmdClient : public QObject
     Q_PROPERTY(QVariantList artistTracks READ artistTracks NOTIFY artistChanged)
     Q_PROPERTY(QVariantMap albumInfo READ albumInfo NOTIFY albumChanged)
     Q_PROPERTY(QVariantList albumTracks READ albumTracks NOTIFY albumChanged)
+    Q_PROPERTY(QVariantList homeBlocks READ homeBlocks NOTIFY homeChanged)
+    Q_PROPERTY(QVariantList metatagGroups READ metatagGroups NOTIFY metatagsChanged)
+    Q_PROPERTY(QVariantList genres READ genres NOTIFY genresChanged)
+    Q_PROPERTY(QVariantList favorites READ favorites NOTIFY favoritesChanged)
+    Q_PROPERTY(QString tagTitle READ tagTitle NOTIFY tagChanged)
+    Q_PROPERTY(QVariantList tagPlaylists READ tagPlaylists NOTIFY tagChanged)
+    Q_PROPERTY(QString tagStation READ tagStation NOTIFY tagChanged)
     Q_PROPERTY(QVariantList cacheItems READ cacheItems NOTIFY cacheChanged)
     Q_PROPERTY(qint64 cacheTotalBytes READ cacheTotalBytes NOTIFY cacheChanged)
     Q_PROPERTY(qint64 cacheLimitBytes READ cacheLimitBytes NOTIFY cacheChanged)
@@ -56,6 +63,13 @@ public:
     QVariantList artistTracks() const;
     QVariantMap albumInfo() const;
     QVariantList albumTracks() const;
+    QVariantList homeBlocks() const;
+    QVariantList metatagGroups() const;
+    QVariantList genres() const;
+    QVariantList favorites() const;
+    QString tagTitle() const;
+    QVariantList tagPlaylists() const;
+    QString tagStation() const;
     QVariantList cacheItems() const;
     qint64 cacheTotalBytes() const;
     qint64 cacheLimitBytes() const;
@@ -70,6 +84,11 @@ public:
     Q_INVOKABLE void loadPlaylist(qint64 uid, qint64 kind);
     Q_INVOKABLE void loadArtist(const QString &id);
     Q_INVOKABLE void loadAlbum(const QString &id);
+    Q_INVOKABLE void loadHome();
+    Q_INVOKABLE void loadMetatags();
+    Q_INVOKABLE void loadGenres();
+    Q_INVOKABLE void loadFavorites();
+    Q_INVOKABLE void loadTag(const QString &tag);
     Q_INVOKABLE void startStation(const QString &station);
     Q_INVOKABLE void loadCache();
     Q_INVOKABLE void download(const QVariantMap &item);
@@ -92,6 +111,11 @@ signals:
     void playlistTracksChanged();
     void artistChanged();
     void albumChanged();
+    void homeChanged();
+    void metatagsChanged();
+    void genresChanged();
+    void favoritesChanged();
+    void tagChanged();
     void cacheChanged();
     void keyChanged();
     void authChanged();
@@ -129,6 +153,13 @@ private:
     QVariantList m_artistTracks;
     QVariantMap m_albumInfo;
     QVariantList m_albumTracks;
+    QVariantList m_homeBlocks;
+    QVariantList m_metatagGroups;
+    QVariantList m_genres;
+    QVariantList m_favorites;
+    QString m_tagTitle;
+    QVariantList m_tagPlaylists;
+    QString m_tagStation;
     QVariantList m_cacheItems;
     qint64 m_cacheTotalBytes = 0;
     qint64 m_cacheLimitBytes = 0;

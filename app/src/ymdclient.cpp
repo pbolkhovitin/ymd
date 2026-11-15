@@ -114,6 +114,41 @@ QVariantList YmdClient::albumTracks() const
     return m_albumTracks;
 }
 
+QVariantList YmdClient::homeBlocks() const
+{
+    return m_homeBlocks;
+}
+
+QVariantList YmdClient::metatagGroups() const
+{
+    return m_metatagGroups;
+}
+
+QVariantList YmdClient::genres() const
+{
+    return m_genres;
+}
+
+QVariantList YmdClient::favorites() const
+{
+    return m_favorites;
+}
+
+QString YmdClient::tagTitle() const
+{
+    return m_tagTitle;
+}
+
+QVariantList YmdClient::tagPlaylists() const
+{
+    return m_tagPlaylists;
+}
+
+QString YmdClient::tagStation() const
+{
+    return m_tagStation;
+}
+
 QVariantList YmdClient::cacheItems() const
 {
     return m_cacheItems;
@@ -357,6 +392,56 @@ void YmdClient::loadAlbum(const QString &id)
         m_albumTracks =
             object.value(QStringLiteral("tracks")).toArray().toVariantList();
         emit albumChanged();
+    });
+}
+
+void YmdClient::loadHome()
+{
+    getJson(QStringLiteral("/v1/home"), [this](const QJsonObject &object) {
+        m_homeBlocks =
+            object.value(QStringLiteral("blocks")).toArray().toVariantList();
+        emit homeChanged();
+    });
+}
+
+void YmdClient::loadMetatags()
+{
+    getJson(QStringLiteral("/v1/discovery/metatags"), [this](const QJsonObject &object) {
+        m_metatagGroups =
+            object.value(QStringLiteral("groups")).toArray().toVariantList();
+        emit metatagsChanged();
+    });
+}
+
+void YmdClient::loadGenres()
+{
+    getJson(QStringLiteral("/v1/discovery/genres"), [this](const QJsonObject &object) {
+        m_genres =
+            object.value(QStringLiteral("genres")).toArray().toVariantList();
+        emit genresChanged();
+    });
+}
+
+void YmdClient::loadFavorites()
+{
+    getJson(QStringLiteral("/v1/favorites"), [this](const QJsonObject &object) {
+        m_favorites =
+            object.value(QStringLiteral("tracks")).toArray().toVariantList();
+        emit favoritesChanged();
+    });
+}
+
+void YmdClient::loadTag(const QString &tag)
+{
+    const QString path =
+        QStringLiteral("/v1/discovery/tag?tag=%1")
+            .arg(QString::fromUtf8(QUrl::toPercentEncoding(tag)));
+    getJson(path, [this](const QJsonObject &object) {
+        m_tagTitle = object.value(QStringLiteral("title")).toString();
+        m_tagStation = object.value(QStringLiteral("station")).toString();
+        m_tagPlaylists =
+            object.value(QStringLiteral("playlists")).toArray().toVariantList();
+        emit tagChanged();
     });
 }
 
