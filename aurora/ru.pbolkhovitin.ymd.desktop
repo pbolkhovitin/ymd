@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+X-Nemo-Application-Type=silica-qt5
+Icon=ru.pbolkhovitin.ymd
+Name=ymd
+Name[ru]=ymd
+Comment=Unofficial Yandex Music client
+Comment[ru]=Неофициальный клиент Яндекс Музыки
+Exec=/usr/bin/ru.pbolkhovitin.ymd
+X-Nemo-Single-Instance=true
+
+[X-Application]
+OrganizationName=ru.pbolkhovitin
+ApplicationName=ymd
+Permissions=Internet;Audio;Downloads;
+ExecDBus=/usr/bin/ru.pbolkhovitin.ymd
+ExportDBusInterfaces=false
+
+[X-Aurora-Application]
+Orientation=All
+IconMode=Crop

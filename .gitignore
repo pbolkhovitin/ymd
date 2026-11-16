@@ -6,3 +6,7 @@ dist/
 .DS_Store
 notes/local-*.md
 packaging/.shlibdeps/
+
+# Aurora OS build output
+aurora/build-*/
+aurora/stage/
