@@ -60,11 +60,21 @@ for ARCH in aarch64 armv7hl; do
     mkdir -p "$ROOT/.rpm-stage/$PKGDIR"
     cp -a "$STAGE/usr" "$ROOT/.rpm-stage/$PKGDIR/"
     cp "$STAGE/manifest.json" "$ROOT/.rpm-stage/$PKGDIR/"
-    tar -C "$ROOT/.rpm-stage" -czf "$OUT/SOURCES/$PKGDIR.tar.gz" "$PKGDIR"
+    # Aurora runs apps as a regular user; never ship root:root 770 files.
+    find "$ROOT/.rpm-stage/$PKGDIR" -type d -exec chmod 755 {} +
+    find "$ROOT/.rpm-stage/$PKGDIR" -type f -exec chmod 644 {} +
+    chmod 755 "$ROOT/.rpm-stage/$PKGDIR/usr/bin/$NAME"
+    tar -C "$ROOT/.rpm-stage" --mode='u=rwX,go=rX' --owner=root --group=root \
+        -czf "$OUT/SOURCES/$PKGDIR.tar.gz" "$PKGDIR"
 
     docker run --rm -v "$ROOT:/workspace" -v "$OUT:/work" "$IMAGE" \
-        rpmbuild -bb --target "$RPM_TARGET" --define '_topdir /work' \
-        "/work/SPECS/$NAME.spec"
+        bash -lc "mkdir -p /tmp/rpmbuild && rpmbuild -bb --target $RPM_TARGET \
+            --define '_topdir /tmp/rpmbuild' \
+            --define '_sourcedir /work/SOURCES' \
+            --define '_specdir /work/SPECS' \
+            --define '_rpmdir /work/RPMS' \
+            --define '_srcrpmdir /work/SRPMS' \
+            /work/SPECS/$NAME.spec"
 done
 
 find "$OUT/RPMS" -name '*.rpm' -print
