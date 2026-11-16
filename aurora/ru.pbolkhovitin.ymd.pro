@@ -5,6 +5,9 @@ QT += network qml quick multimedia
 PKGCONFIG += auroraapp
 
 QMAKE_CXXFLAGS += -fPIC
+# Drop unused transitive Aurora libs (armv7hl otherwise requires
+# libappmanifest-glib, which the regular validator rejects).
+QMAKE_LFLAGS += -Wl,--as-needed
 
 SOURCES += \
     src/main.cpp \
