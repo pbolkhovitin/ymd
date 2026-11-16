@@ -124,6 +124,57 @@ Kirigami.ApplicationWindow {
         client.startStation("artist:" + String(item.artistId));
     }
 
+    function playTracks(tracks) {
+        if (!tracks || tracks.length === 0) {
+            return;
+        }
+        client.cmd("queue_set", {
+            "tracks": tracks,
+            "index": 0,
+            "play": true
+        });
+    }
+
+    function openPlaylist(uid, kind, title) {
+        if (kind === undefined || kind === null) {
+            return;
+        }
+        browseDialog.close();
+        tagDialog.close();
+        playlistsDialog.pendingUid = uid === undefined ? 0 : uid;
+        playlistsDialog.pendingKind = kind;
+        playlistsDialog.pendingTitle = title || "";
+        playlistsDialog.open();
+    }
+
+    function openTag(tag, title) {
+        if (!tag) {
+            return;
+        }
+        tagDialog.tagTitle = title || "Подборка";
+        tagDialog.open();
+        client.loadTag(tag);
+    }
+
+    function flattenTags(nodes, depth) {
+        var out = [];
+        if (!nodes) {
+            return out;
+        }
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            out.push({
+                "tag": node.tag,
+                "title": node.title,
+                "depth": depth || 0
+            });
+            if (node.children && node.children.length > 0) {
+                out = out.concat(flattenTags(node.children, (depth || 0) + 1));
+            }
+        }
+        return out;
+    }
+
     function filteredTracks() {
         var query = playlistFilter.trim().toLowerCase();
         if (!query) {
@@ -160,6 +211,10 @@ Kirigami.ApplicationWindow {
         onActivated: searchField.forceActiveFocus()
     }
     Shortcut {
+        sequence: "Ctrl+O"
+        onActivated: browseDialog.open()
+    }
+    Shortcut {
         sequence: "Ctrl+P"
         onActivated: playlistsDialog.open()
     }
@@ -176,406 +231,684 @@ Kirigami.ApplicationWindow {
         onActivated: Qt.quit()
     }
 
-    Controls.ScrollView {
-        id: scroll
+    ColumnLayout {
         anchors.fill: parent
-        clip: true
-        contentWidth: availableWidth
-        Controls.ScrollBar.horizontal.policy: Controls.ScrollBar.AlwaysOff
+        anchors.leftMargin: Kirigami.Units.largeSpacing
+        anchors.rightMargin: Kirigami.Units.largeSpacing
+        anchors.topMargin: Kirigami.Units.largeSpacing
+        anchors.bottomMargin: Kirigami.Units.largeSpacing
+        spacing: Kirigami.Units.largeSpacing
 
-        ColumnLayout {
-            x: Kirigami.Units.largeSpacing
-            width: scroll.availableWidth - Kirigami.Units.largeSpacing * 2
+        RowLayout {
+            Layout.fillWidth: true
+
+            Kirigami.Heading {
+                text: "ymd"
+                level: 2
+                Layout.fillWidth: true
+            }
+
+            Controls.ToolButton {
+                icon.name: "settings-configure"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: Kirigami.Theme.textColor
+                onClicked: settingsDialog.open()
+                Controls.ToolTip.text: "Настройки"
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                text: "✕"
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
+                onClicked: root.visible = false
+                Controls.ToolTip.text: "Скрыть в трей"
+                Controls.ToolTip.visible: hovered
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
             spacing: Kirigami.Units.largeSpacing
 
-            RowLayout {
-                Layout.fillWidth: true
+            Rectangle {
+                Layout.preferredWidth: 128
+                Layout.preferredHeight: 128
+                color: Kirigami.Theme.backgroundColor
+                radius: Kirigami.Units.smallSpacing
 
-                Kirigami.Heading {
-                    text: "ymd"
-                    level: 2
-                    Layout.fillWidth: true
+                Image {
+                    id: coverImage
+                    anchors.fill: parent
+                    source: root.track.cover || ""
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    visible: status === Image.Ready
                 }
 
-                Controls.ToolButton {
-                    text: "✕"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
-                    onClicked: root.visible = false
-                    Controls.ToolTip.text: "Скрыть в трей"
-                    Controls.ToolTip.visible: hovered
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.largeSpacing
-
-                Rectangle {
-                    Layout.preferredWidth: 128
-                    Layout.preferredHeight: 128
-                    color: Kirigami.Theme.backgroundColor
-                    radius: Kirigami.Units.smallSpacing
-
-                    Image {
-                        id: coverImage
-                        anchors.fill: parent
-                        source: root.track.cover || ""
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        visible: status === Image.Ready
-                    }
-
-                    Kirigami.Icon {
-                        anchors.centerIn: parent
-                        source: "audio-x-generic"
-                        width: Kirigami.Units.iconSizes.huge
-                        height: width
-                        visible: !coverImage.visible
-                    }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
-
-                    Controls.Label {
-                        text: root.track.title || "Ничего не играет"
-                        font.bold: true
-                        font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-
-                    Controls.Label {
-                        text: root.artistLine
-                        color: Kirigami.Theme.disabledTextColor
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-
-                    Controls.Label {
-                        text: root.statusLine
-                        color: Kirigami.Theme.disabledTextColor
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
+                Kirigami.Icon {
+                    anchors.centerIn: parent
+                    source: "audio-x-generic"
+                    width: Kirigami.Units.iconSizes.huge
+                    height: width
+                    visible: !coverImage.visible
                 }
             }
 
-            Controls.Slider {
-                id: seekSlider
+            ColumnLayout {
                 Layout.fillWidth: true
-                from: 0
-                to: Math.max(1, root.durationMs)
-                value: root.positionMs
-                enabled: root.durationMs > 0
-                onPressedChanged: {
-                    if (!pressed && root.durationMs > 0) {
-                        client.seek(value);
-                    }
-                }
-            }
-
-            Binding {
-                target: seekSlider
-                property: "value"
-                value: root.positionMs
-                when: !seekSlider.pressed
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
 
                 Controls.Label {
-                    text: Format.formatTime(root.positionMs)
+                    text: root.track.title || "Ничего не играет"
+                    font.bold: true
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: root.artistLine
                     color: Kirigami.Theme.disabledTextColor
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                Controls.Label {
+                    text: root.statusLine
+                    color: Kirigami.Theme.disabledTextColor
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
+        }
+
+        Controls.Slider {
+            id: seekSlider
+            Layout.fillWidth: true
+            from: 0
+            to: Math.max(1, root.durationMs)
+            value: root.positionMs
+            enabled: root.durationMs > 0
+            onPressedChanged: {
+                if (!pressed && root.durationMs > 0) {
+                    client.seek(value);
+                }
+            }
+        }
+
+        Binding {
+            target: seekSlider
+            property: "value"
+            value: root.positionMs
+            when: !seekSlider.pressed
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            Controls.Label {
+                text: Format.formatTime(root.positionMs)
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+
+            Controls.Label {
+                text: Format.formatTime(root.durationMs)
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: Kirigami.Units.largeSpacing
+
+            TransportButton {
+                kind: "prev"
+                onClicked: root.send("prev")
+                Controls.ToolTip.text: "Предыдущий"
+                Controls.ToolTip.visible: hovered
+            }
+
+            TransportButton {
+                kind: root.playing ? "pause" : "play"
+                implicitWidth: Kirigami.Units.gridUnit * 2.4
+                implicitHeight: Kirigami.Units.gridUnit * 2.4
+                onClicked: root.send("toggle")
+                Controls.ToolTip.text: root.playing ? "Пауза" : "Играть"
+                Controls.ToolTip.visible: hovered
+            }
+
+            TransportButton {
+                kind: "next"
+                onClicked: root.send("next")
+                Controls.ToolTip.text: "Следующий"
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                text: root.track.liked === true ? "♥" : "♡"
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
+                opacity: root.track.liked === true ? 1 : 0.45
+                enabled: root.track.id !== undefined
+                onClicked: root.likeItem(root.track)
+                Controls.ToolTip.text: "Нравится"
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                text: root.track.cached === true ? "✓" : "⤓"
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
+                opacity: root.track.cached === true ? 0.55 : 1
+                enabled: root.track.id !== undefined
+                onClicked: root.downloadItem(root.track)
+                Controls.ToolTip.text: root.track.cached === true ? "Уже в кэше" : "Скачать трек"
+                Controls.ToolTip.visible: hovered
+            }
+
+            TransportButton {
+                kind: "wave"
+                onClicked: root.send("wave_start")
+                Controls.ToolTip.text: "Волна"
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                id: volumeButton
+                icon.name: root.volume <= 0.001
+                    ? "audio-volume-muted"
+                    : root.volume < 0.34
+                        ? "audio-volume-low"
+                        : root.volume < 0.67
+                            ? "audio-volume-medium"
+                            : "audio-volume-high"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: Kirigami.Theme.textColor
+                onClicked: volumePopup.opened ? volumePopup.close() : volumePopup.open()
+                Controls.ToolTip.text: "Громкость: " + Math.round(root.volume * 100) + "%"
+                Controls.ToolTip.visible: hovered
+            }
+        }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: Kirigami.Units.largeSpacing
+
+            Controls.ToolButton {
+                icon.name: root.repeatMode === "one"
+                    ? "media-playlist-repeat-song"
+                    : "media-playlist-repeat"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: root.repeatMode === "off"
+                    ? Kirigami.Theme.disabledTextColor
+                    : Kirigami.Theme.highlightColor
+                opacity: root.repeatMode === "off" ? 0.45 : 1
+                onClicked: client.cmd("repeat", { "value": Format.repeatNext(root.repeatMode) })
+                Controls.ToolTip.text: "Повтор: " + root.repeatLabel
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                icon.name: "media-playlist-shuffle"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: root.shuffle
+                    ? Kirigami.Theme.highlightColor
+                    : Kirigami.Theme.disabledTextColor
+                opacity: root.shuffle ? 1 : 0.45
+                onClicked: client.cmd("shuffle", { "value": !root.shuffle })
+                Controls.ToolTip.text: "Перемешать: " + (root.shuffle ? "вкл" : "выкл")
+                Controls.ToolTip.visible: hovered
+            }
+
+            Controls.ToolButton {
+                icon.name: "media-optical-audio"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: Kirigami.Theme.textColor
+                onClicked: client.cmd("quality", { "value": Format.qualityNext(root.quality) })
+                Controls.ToolTip.text: "Качество: " + Format.qualityLabel(root.quality)
+                Controls.ToolTip.visible: hovered
+            }
+        }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: Kirigami.Units.largeSpacing
+
+            Controls.Button {
+                text: "Обзор"
+                onClicked: browseDialog.open()
+            }
+
+            Controls.Button {
+                text: "Плейлисты"
+                onClicked: playlistsDialog.open()
+            }
+
+            Controls.Button {
+                text: "Кэш"
+                onClicked: cacheDialog.open()
+            }
+        }
+
+        Repeater {
+            model: root.downloads
+
+            delegate: RowLayout {
+                Layout.fillWidth: true
+                visible: modelData.state === "downloading"
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: "⤓ " + (modelData.title || modelData.id)
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                Controls.ProgressBar {
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                    from: 0
+                    to: Math.max(1, modelData.total || 0)
+                    value: Math.min(modelData.bytes || 0, modelData.total || 0)
+                }
+
+                Controls.Label {
+                    text: modelData.total > 0
+                        ? Math.round((modelData.bytes || 0) * 100 / modelData.total) + "%"
+                        : "…"
+                    color: Kirigami.Theme.disabledTextColor
+                    horizontalAlignment: Text.AlignRight
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 2
+                }
+            }
+        }
+
+        Controls.Label {
+            Layout.alignment: Qt.AlignHCenter
+            visible: root.downloadPending > 0
+            text: "В очереди на скачивание: " + root.downloadPending
+            color: Kirigami.Theme.disabledTextColor
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: errorRow.implicitHeight + Kirigami.Units.smallSpacing * 2
+            visible: client.lastError.length > 0
+            color: Kirigami.Theme.backgroundColor
+            border.width: 1
+            border.color: Kirigami.Theme.negativeTextColor
+            radius: Kirigami.Units.smallSpacing
+
+            RowLayout {
+                id: errorRow
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Label {
+                    text: client.lastError
+                    color: Kirigami.Theme.negativeTextColor
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    text: "Повторить"
+                    onClicked: client.retryKey()
+                }
+            }
+        }
+
+        Controls.TextField {
+            id: searchField
+            Layout.fillWidth: true
+            placeholderText: "Поиск"
+            onAccepted: client.search(text)
+        }
+
+        Controls.Label {
+            visible: client.searching
+                || (searchField.text.length > 0 && client.searchResults.length === 0)
+            text: client.searching ? "Ищу…" : "Ничего не найдено"
+            color: Kirigami.Theme.disabledTextColor
+        }
+
+        Repeater {
+            model: Math.min(6, client.searchResults.length)
+
+            delegate: TrackRow {
+                Layout.fillWidth: true
+                item: client.searchResults[index]
+                showDownload: true
+                onClicked: client.cmd("play_track", client.searchResults[index])
+                onDownloadClicked: root.downloadItem(client.searchResults[index])
+                onPlayRequested: client.cmd("play_track", client.searchResults[index])
+                onEnqueueRequested: root.enqueueItem(client.searchResults[index])
+                onLikeRequested: root.likeItem(client.searchResults[index])
+                onAddToPlaylistRequested: root.openAddToPlaylist(client.searchResults[index])
+                onCopyLinkRequested: client.copyLink(String(client.searchResults[index].id))
+                onArtistRequested: root.openArtist(client.searchResults[index])
+                onAlbumRequested: root.openAlbum(client.searchResults[index])
+                onStationTrackRequested: root.startTrackStation(client.searchResults[index])
+                onStationArtistRequested: root.startArtistStation(client.searchResults[index])
+                onInfoRequested: root.openTrackInfo(client.searchResults[index])
+            }
+        }
+
+        Controls.Label {
+            text: "Очередь"
+            font.bold: true
+            visible: root.queueItems.length > 0
+        }
+
+        ListView {
+            id: queueView
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            model: root.queueItems
+
+            delegate: TrackRow {
+                width: queueView.width
+                item: modelData
+                rowIndex: index
+                showIndex: true
+                current: index === root.queueIndex
+                showDownload: true
+                reorderable: true
+                showRemoveFromQueue: true
+                showEnqueue: false
+                onClicked: client.cmd("queue_play", { "index": index })
+                onDownloadClicked: root.downloadItem(modelData)
+                onPlayRequested: client.cmd("queue_play", { "index": index })
+                onLikeRequested: root.likeItem(modelData)
+                onAddToPlaylistRequested: root.openAddToPlaylist(modelData)
+                onCopyLinkRequested: client.copyLink(String(modelData.id))
+                onArtistRequested: root.openArtist(modelData)
+                onAlbumRequested: root.openAlbum(modelData)
+                onStationTrackRequested: root.startTrackStation(modelData)
+                onStationArtistRequested: root.startArtistStation(modelData)
+                onInfoRequested: root.openTrackInfo(modelData)
+                onRemoveFromQueueRequested: client.cmd("queue_remove", { "index": index })
+                onMoveRequested: function(from, to) {
+                    client.cmd("queue_move", { "from": from, "to": to });
+                }
+            }
+        }
+
+        Controls.Label {
+            text: "Очередь пуста"
+            color: Kirigami.Theme.disabledTextColor
+            visible: root.queueItems.length === 0
+        }
+
+        Item {
+            Layout.preferredHeight: Kirigami.Units.largeSpacing
+        }
+    }
+
+    Controls.Popup {
+        id: volumePopup
+        parent: volumeButton
+        x: Math.round((volumeButton.width - width) / 2)
+        y: -height - Kirigami.Units.smallSpacing
+        width: Kirigami.Units.gridUnit * 2.6
+        height: Kirigami.Units.gridUnit * 7
+        modal: false
+        closePolicy: Controls.Popup.CloseOnEscape | Controls.Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: Kirigami.Theme.backgroundColor
+            radius: Kirigami.Units.smallSpacing
+            border.width: 1
+            border.color: Kirigami.Theme.disabledTextColor
+        }
+
+        contentItem: Item {
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Slider {
+                    id: volumePopupSlider
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    orientation: Qt.Vertical
+                    from: 0
+                    to: 1
+                    value: root.volume
+                    onMoved: client.cmd("volume", { "value": value })
+                }
+
+                Controls.Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: Math.round(volumePopupSlider.value * 100) + "%"
+                    color: Kirigami.Theme.textColor
+                }
+            }
+        }
+
+        onOpened: volumePopupSlider.value = root.volume
+    }
+
+    Binding {
+        target: volumePopupSlider
+        property: "value"
+        value: root.volume
+        when: !volumePopupSlider.pressed
+    }
+
+    Controls.Dialog {
+        id: settingsDialog
+        title: "Настройки"
+        modal: true
+        width: Math.min(420, root.width - 32)
+        height: Math.min(460, root.height - 32)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Close
+
+        function syncFromState() {
+            var current = root.quality;
+            for (var i = 0; i < qualityCombo.model.length; ++i) {
+                if (qualityCombo.model[i].value === current) {
+                    qualityCombo.currentIndex = i;
+                    break;
+                }
+            }
+            settingsCacheLimitSpin.value = Math.max(settingsCacheLimitSpin.from,
+                Math.round(client.cacheLimitBytes / 1048576));
+            client.loadCache();
+        }
+
+        onOpened: syncFromState()
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Качество воспроизведения"
+                font.bold: true
+            }
+
+            Controls.ComboBox {
+                id: qualityCombo
+                Layout.fillWidth: true
+                textRole: "text"
+                model: [
+                    { text: "FLAC (lossless)", value: "lossless" },
+                    { text: "Высокое (HQ)", value: "hq" },
+                    { text: "Среднее (NQ)", value: "nq" },
+                    { text: "Низкое (LQ)", value: "lq" }
+                ]
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                text: "Лимит кэша, МБ"
+                font.bold: true
+            }
+
+            Controls.SpinBox {
+                id: settingsCacheLimitSpin
+                Layout.fillWidth: true
+                from: 128
+                to: 102400
+                stepSize: 128
+                editable: true
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Занято " + Format.bytes(client.cacheTotalBytes)
+                    + " из " + Format.bytes(client.cacheLimitBytes)
+                color: Kirigami.Theme.disabledTextColor
+                elide: Text.ElideRight
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Controls.Button {
+                    text: "Очистить кэш"
+                    onClicked: client.clearCache()
                 }
 
                 Item {
                     Layout.fillWidth: true
                 }
 
-                Controls.Label {
-                    text: Format.formatTime(root.durationMs)
-                    color: Kirigami.Theme.disabledTextColor
+                Controls.Button {
+                    text: "Управление кэшем"
+                    onClicked: {
+                        settingsDialog.close();
+                        cacheDialog.open();
+                    }
                 }
             }
 
-            RowLayout {
+            Controls.Label {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
-
-                Controls.Label {
-                    text: "Громкость"
-                    color: Kirigami.Theme.disabledTextColor
-                }
-
-                Controls.Slider {
-                    id: volumeSlider
-                    Layout.fillWidth: true
-                    from: 0
-                    to: 1
-                    value: root.volume
-                    onPressedChanged: {
-                        if (!pressed) {
-                            client.cmd("volume", { "value": value });
-                        }
-                    }
-                }
-
-                Controls.Label {
-                    text: Math.round(volumeSlider.value * 100) + "%"
-                    color: Kirigami.Theme.disabledTextColor
-                    horizontalAlignment: Text.AlignRight
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 2
-                }
-            }
-
-            Binding {
-                target: volumeSlider
-                property: "value"
-                value: root.volume
-                when: !volumeSlider.pressed
-            }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: Kirigami.Units.largeSpacing
-
-                Controls.ToolButton {
-                    text: "⏮"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
-                    onClicked: root.send("prev")
-                    Controls.ToolTip.text: "Предыдущий"
-                    Controls.ToolTip.visible: hovered
-                }
-
-                Controls.ToolButton {
-                    text: root.playing ? "⏸" : "▶"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 6
-                    onClicked: root.send("toggle")
-                    Controls.ToolTip.text: root.playing ? "Пауза" : "Играть"
-                    Controls.ToolTip.visible: hovered
-                }
-
-                Controls.ToolButton {
-                    text: "⏭"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
-                    onClicked: root.send("next")
-                    Controls.ToolTip.text: "Следующий"
-                    Controls.ToolTip.visible: hovered
-                }
-
-                Controls.ToolButton {
-                    text: root.track.liked === true ? "♥" : "♡"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 4
-                    opacity: root.track.liked === true ? 1 : 0.45
-                    enabled: root.track.id !== undefined
-                    onClicked: root.likeItem(root.track)
-                    Controls.ToolTip.text: "Нравится"
-                    Controls.ToolTip.visible: hovered
-                }
-
-                Controls.ToolButton {
-                    text: root.track.cached === true ? "✓" : "⤓"
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
-                    opacity: root.track.cached === true ? 0.55 : 1
-                    enabled: root.track.id !== undefined
-                    onClicked: root.downloadItem(root.track)
-                    Controls.ToolTip.text: root.track.cached === true ? "Уже в кэше" : "Скачать трек"
-                    Controls.ToolTip.visible: hovered
-                }
-
-                Controls.Button {
-                    text: "Волна"
-                    onClicked: root.send("wave_start")
-                }
-            }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: Kirigami.Units.largeSpacing
-
-                Controls.Button {
-                    text: "Повтор: " + root.repeatLabel
-                    onClicked: client.cmd("repeat", { "value": Format.repeatNext(root.repeatMode) })
-                }
-
-                Controls.Button {
-                    text: "Перемешать: " + (root.shuffle ? "вкл" : "выкл")
-                    onClicked: client.cmd("shuffle", { "value": !root.shuffle })
-                }
-
-                Controls.Button {
-                    text: "Качество: " + Format.qualityLabel(root.quality)
-                    onClicked: client.cmd("quality", { "value": Format.qualityNext(root.quality) })
-                }
-            }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: Kirigami.Units.largeSpacing
-
-                Controls.Button {
-                    text: "Плейлисты"
-                    onClicked: playlistsDialog.open()
-                }
-
-                Controls.Button {
-                    text: "Кэш"
-                    onClicked: cacheDialog.open()
-                }
-            }
-
-            Repeater {
-                model: root.downloads
-
-                delegate: RowLayout {
-                    Layout.fillWidth: true
-                    visible: modelData.state === "downloading"
-                    spacing: Kirigami.Units.smallSpacing
-
-                    Controls.Label {
-                        text: "⤓ " + (modelData.title || modelData.id)
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-
-                    Controls.ProgressBar {
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 6
-                        from: 0
-                        to: Math.max(1, modelData.total || 0)
-                        value: Math.min(modelData.bytes || 0, modelData.total || 0)
-                    }
-
-                    Controls.Label {
-                        text: modelData.total > 0
-                            ? Math.round((modelData.bytes || 0) * 100 / modelData.total) + "%"
-                            : "…"
-                        color: Kirigami.Theme.disabledTextColor
-                        horizontalAlignment: Text.AlignRight
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 2
-                    }
-                }
-            }
-
-            Controls.Label {
-                Layout.alignment: Qt.AlignHCenter
-                visible: root.downloadPending > 0
-                text: "В очереди на скачивание: " + root.downloadPending
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                text: "Цвета интерфейса берутся из темы KDE."
                 color: Kirigami.Theme.disabledTextColor
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: errorRow.implicitHeight + Kirigami.Units.smallSpacing * 2
-                visible: client.lastError.length > 0
-                color: Kirigami.Theme.backgroundColor
-                border.width: 1
-                border.color: Kirigami.Theme.negativeTextColor
-                radius: Kirigami.Units.smallSpacing
-
-                RowLayout {
-                    id: errorRow
-                    anchors.fill: parent
-                    anchors.margins: Kirigami.Units.smallSpacing
-                    spacing: Kirigami.Units.smallSpacing
-
-                    Controls.Label {
-                        text: client.lastError
-                        color: Kirigami.Theme.negativeTextColor
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-
-                    Controls.Button {
-                        text: "Повторить"
-                        onClicked: client.retryKey()
-                    }
-                }
-            }
-
-            Controls.TextField {
-                id: searchField
-                Layout.fillWidth: true
-                placeholderText: "Поиск"
-                onAccepted: client.search(text)
-            }
-
-            Controls.Label {
-                visible: client.searching
-                    || (searchField.text.length > 0 && client.searchResults.length === 0)
-                text: client.searching ? "Ищу…" : "Ничего не найдено"
-                color: Kirigami.Theme.disabledTextColor
-            }
-
-            Repeater {
-                model: Math.min(6, client.searchResults.length)
-
-                delegate: TrackRow {
-                    Layout.fillWidth: true
-                    item: client.searchResults[index]
-                    showDownload: true
-                    onClicked: client.cmd("play_track", client.searchResults[index])
-                    onDownloadClicked: root.downloadItem(client.searchResults[index])
-                    onPlayRequested: client.cmd("play_track", client.searchResults[index])
-                    onEnqueueRequested: root.enqueueItem(client.searchResults[index])
-                    onLikeRequested: root.likeItem(client.searchResults[index])
-                    onAddToPlaylistRequested: root.openAddToPlaylist(client.searchResults[index])
-                    onCopyLinkRequested: client.copyLink(String(client.searchResults[index].id))
-                    onArtistRequested: root.openArtist(client.searchResults[index])
-                    onAlbumRequested: root.openAlbum(client.searchResults[index])
-                    onStationTrackRequested: root.startTrackStation(client.searchResults[index])
-                    onStationArtistRequested: root.startArtistStation(client.searchResults[index])
-                    onInfoRequested: root.openTrackInfo(client.searchResults[index])
-                }
-            }
-
-            Controls.Label {
-                text: "Очередь"
-                font.bold: true
-                visible: root.queueItems.length > 0
-            }
-
-            Repeater {
-                model: Math.min(8, root.queueItems.length)
-
-                delegate: TrackRow {
-                    Layout.fillWidth: true
-                    item: root.queueItems[index]
-                    rowIndex: index
-                    showIndex: true
-                    current: index === root.queueIndex
-                    showDownload: true
-                    reorderable: true
-                    showRemoveFromQueue: true
-                    showEnqueue: false
-                    onClicked: client.cmd("queue_play", { "index": index })
-                    onDownloadClicked: root.downloadItem(root.queueItems[index])
-                    onPlayRequested: client.cmd("queue_play", { "index": index })
-                    onLikeRequested: root.likeItem(root.queueItems[index])
-                    onAddToPlaylistRequested: root.openAddToPlaylist(root.queueItems[index])
-                    onCopyLinkRequested: client.copyLink(String(root.queueItems[index].id))
-                    onArtistRequested: root.openArtist(root.queueItems[index])
-                    onAlbumRequested: root.openAlbum(root.queueItems[index])
-                    onStationTrackRequested: root.startTrackStation(root.queueItems[index])
-                    onStationArtistRequested: root.startArtistStation(root.queueItems[index])
-                    onInfoRequested: root.openTrackInfo(root.queueItems[index])
-                    onRemoveFromQueueRequested: client.cmd("queue_remove", { "index": index })
-                    onMoveRequested: function(from, to) {
-                        client.cmd("queue_move", { "from": from, "to": to });
-                    }
-                }
-            }
-
-            Controls.Label {
-                text: "Очередь пуста"
-                color: Kirigami.Theme.disabledTextColor
-                visible: root.queueItems.length === 0
+                wrapMode: Text.WordWrap
             }
 
             Item {
-                Layout.preferredHeight: Kirigami.Units.largeSpacing
+                Layout.fillHeight: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Controls.Button {
+                    text: "О программе"
+                    onClicked: aboutDialog.open()
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Controls.Button {
+                    text: "Сохранить"
+                    highlighted: true
+                    onClicked: {
+                        var item = qualityCombo.model[qualityCombo.currentIndex];
+                        if (item) {
+                            client.cmd("quality", { "value": item.value });
+                        }
+                        client.setCacheLimit(settingsCacheLimitSpin.value);
+                        settingsDialog.close();
+                    }
+                }
+            }
+        }
+    }
+
+    Controls.Dialog {
+        id: aboutDialog
+        title: "О программе"
+        modal: true
+        width: Math.min(360, root.width - 32)
+        height: Math.min(400, root.height - 32)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Close
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Icon {
+                source: "ymd-qt"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: Kirigami.Units.iconSizes.huge
+                Layout.preferredHeight: Kirigami.Units.iconSizes.huge
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "ymd"
+                font.bold: true
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 6
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Неофициальный клиент Яндекс Музыки"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Авторы: Павел Болховитин, Леонид Юрасов"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Версия " + Qt.application.version
+                horizontalAlignment: Text.AlignHCenter
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: "Лицензия MIT"
+                horizontalAlignment: Text.AlignHCenter
+                color: Kirigami.Theme.disabledTextColor
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                text: client.keyReady ? "Демон подключён" : "Нет ключа демона"
+                horizontalAlignment: Text.AlignHCenter
+                color: client.keyReady
+                    ? Kirigami.Theme.disabledTextColor
+                    : Kirigami.Theme.negativeTextColor
+            }
+
+            Item {
+                Layout.fillHeight: true
+            }
+
+            Controls.Button {
+                Layout.fillWidth: true
+                text: "Открыть GitHub"
+                onClicked: Qt.openUrlExternally("https://github.com/pbolkhovitin/ym-noctalia")
             }
         }
     }
@@ -594,6 +927,437 @@ Kirigami.ApplicationWindow {
         function onCacheChanged() {
             cacheDialog.loadingCache = false;
             cacheLimitSpin.value = Math.round(client.cacheLimitBytes / 1048576);
+            settingsCacheLimitSpin.value = Math.max(settingsCacheLimitSpin.from,
+                Math.round(client.cacheLimitBytes / 1048576));
+        }
+
+        function onKeyChanged() {
+            if (!client.keyReady || !browseDialog.visible) {
+                return;
+            }
+            if (client.homeBlocks.length === 0) {
+                client.loadHome();
+            }
+            if (client.metatagGroups.length === 0) {
+                client.loadMetatags();
+            }
+            if (client.genres.length === 0) {
+                client.loadGenres();
+            }
+            if (client.favorites.length === 0) {
+                client.loadFavorites();
+            }
+        }
+    }
+
+    Controls.Dialog {
+        id: browseDialog
+        title: "Обзор"
+        modal: true
+        width: Math.max(320, root.width - 16)
+        height: Math.max(420, root.height - 16)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Close
+        property int tab: 0
+
+        onOpened: {
+            if (client.homeBlocks.length === 0) {
+                client.loadHome();
+            }
+            if (client.metatagGroups.length === 0) {
+                client.loadMetatags();
+            }
+            if (client.genres.length === 0) {
+                client.loadGenres();
+            }
+            if (client.favorites.length === 0) {
+                client.loadFavorites();
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+
+                Controls.Button {
+                    text: "Главная"
+                    checkable: true
+                    checked: browseDialog.tab === 0
+                    onClicked: browseDialog.tab = 0
+                }
+
+                Controls.Button {
+                    text: "Каталог"
+                    checkable: true
+                    checked: browseDialog.tab === 1
+                    onClicked: browseDialog.tab = 1
+                }
+
+                Controls.Button {
+                    text: "Избранное"
+                    checkable: true
+                    checked: browseDialog.tab === 2
+                    onClicked: browseDialog.tab = 2
+                }
+            }
+
+            Controls.ScrollView {
+                id: browseHome
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: browseDialog.tab === 0
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: browseHome.availableWidth
+                    spacing: Kirigami.Units.largeSpacing
+
+                    Repeater {
+                        model: client.homeBlocks
+
+                        delegate: ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+
+                            Controls.Label {
+                                Layout.fillWidth: true
+                                text: modelData.title || "Подборка"
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            ListView {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 172
+                                orientation: ListView.Horizontal
+                                spacing: Kirigami.Units.smallSpacing
+                                clip: true
+                                model: modelData.items
+
+                                delegate: Controls.ItemDelegate {
+                                    width: 132
+                                    height: 168
+                                    padding: 0
+
+                                    onClicked: {
+                                        if (modelData.kind === "playlist") {
+                                            root.openPlaylist(modelData.uid, modelData.playlistKind, modelData.title);
+                                        } else if (modelData.kind === "album") {
+                                            browseDialog.close();
+                                            root.openAlbum({ "albumId": String(modelData.id) });
+                                        } else {
+                                            browseDialog.close();
+                                            client.cmd("play_track", modelData);
+                                        }
+                                    }
+
+                                    contentItem: ColumnLayout {
+                                        spacing: 2
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 120
+                                            Layout.preferredHeight: 120
+                                            radius: Kirigami.Units.smallSpacing
+                                            color: Kirigami.Theme.backgroundColor
+
+                                            Image {
+                                                id: homeCover
+                                                anchors.fill: parent
+                                                source: modelData.cover || ""
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                                visible: status === Image.Ready
+                                            }
+
+                                            Kirigami.Icon {
+                                                anchors.centerIn: parent
+                                                source: "audio-x-generic"
+                                                width: Kirigami.Units.iconSizes.large
+                                                height: width
+                                                visible: !homeCover.visible
+                                            }
+                                        }
+
+                                        Controls.Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.title || "Без названия"
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Controls.Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.subtitle
+                                                || (modelData.trackCount !== undefined
+                                                    ? modelData.trackCount + " треков" : "")
+                                            color: Kirigami.Theme.disabledTextColor
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        visible: client.homeBlocks.length === 0
+                        text: "Загрузка главной…"
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                }
+            }
+
+            Controls.ScrollView {
+                id: browseCatalog
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: browseDialog.tab === 1
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: browseCatalog.availableWidth
+                    spacing: Kirigami.Units.largeSpacing
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        text: "Жанры"
+                        font.bold: true
+                    }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Repeater {
+                            model: client.genres
+
+                            delegate: Controls.Button {
+                                text: modelData.title
+                                onClicked: {
+                                    client.startStation(modelData.station);
+                                    browseDialog.close();
+                                }
+                            }
+                        }
+                    }
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        text: "Настроения, занятия, жанры, эпохи"
+                        font.bold: true
+                    }
+
+                    Repeater {
+                        model: client.metatagGroups
+
+                        delegate: ColumnLayout {
+                            id: metatagGroup
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            property var flatTags: root.flattenTags(modelData.tags)
+
+                            Controls.Label {
+                                Layout.fillWidth: true
+                                text: modelData.title || "Подборки"
+                                font.bold: true
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: Kirigami.Units.smallSpacing
+
+                                Repeater {
+                                    model: metatagGroup.flatTags
+
+                                    delegate: Controls.Button {
+                                        text: (modelData.depth > 0 ? "· " : "")
+                                            + (modelData.title || modelData.tag)
+                                        onClicked: root.openTag(modelData.tag, modelData.title)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        visible: client.genres.length === 0
+                            && client.metatagGroups.length === 0
+                        text: "Загрузка каталога…"
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: browseDialog.tab === 2
+                spacing: Kirigami.Units.smallSpacing
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        text: "Мне нравится"
+                        font.bold: true
+                    }
+
+                    Controls.Button {
+                        text: "Играть все"
+                        enabled: client.favorites.length > 0
+                        onClicked: {
+                            root.playTracks(client.favorites);
+                            browseDialog.close();
+                        }
+                    }
+                }
+
+                ListView {
+                    id: favoritesView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: client.favorites
+
+                    delegate: TrackRow {
+                        width: favoritesView.width
+                        item: modelData
+                        rowIndex: index
+                        showIndex: true
+                        showDownload: true
+                        onClicked: client.cmd("play_track", modelData)
+                        onDownloadClicked: root.downloadItem(modelData)
+                        onPlayRequested: client.cmd("play_track", modelData)
+                        onEnqueueRequested: root.enqueueItem(modelData)
+                        onLikeRequested: root.likeItem(modelData)
+                        onAddToPlaylistRequested: root.openAddToPlaylist(modelData)
+                        onCopyLinkRequested: client.copyLink(String(modelData.id))
+                        onArtistRequested: root.openArtist(modelData)
+                        onAlbumRequested: root.openAlbum(modelData)
+                        onStationTrackRequested: root.startTrackStation(modelData)
+                        onStationArtistRequested: root.startArtistStation(modelData)
+                        onInfoRequested: root.openTrackInfo(modelData)
+                    }
+                }
+
+                Controls.Label {
+                    Layout.fillWidth: true
+                    visible: client.favorites.length === 0
+                    text: "Загрузка избранного…"
+                    color: Kirigami.Theme.disabledTextColor
+                }
+            }
+        }
+    }
+
+    Controls.Dialog {
+        id: tagDialog
+        property string tagTitle: ""
+        title: tagTitle || "Подборка"
+        modal: true
+        width: Math.max(320, root.width - 16)
+        height: Math.max(420, root.height - 16)
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        standardButtons: Controls.Dialog.Close
+
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Controls.Label {
+                    Layout.fillWidth: true
+                    text: client.tagTitle || tagDialog.tagTitle || "Подборка"
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                Controls.Button {
+                    text: "Играть волну"
+                    visible: client.tagStation.length > 0
+                    onClicked: {
+                        client.startStation(client.tagStation);
+                        tagDialog.close();
+                    }
+                }
+            }
+
+            ListView {
+                id: tagPlaylistsView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: client.tagPlaylists
+
+                delegate: Controls.ItemDelegate {
+                    width: tagPlaylistsView.width
+                    onClicked: root.openPlaylist(modelData.uid, modelData.kind, modelData.title)
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Rectangle {
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            radius: Kirigami.Units.smallSpacing
+                            color: Kirigami.Theme.backgroundColor
+
+                            Image {
+                                id: tagCover
+                                anchors.fill: parent
+                                source: modelData.cover || ""
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: status === Image.Ready
+                            }
+
+                            Kirigami.Icon {
+                                anchors.centerIn: parent
+                                source: "audio-x-generic"
+                                width: Kirigami.Units.iconSizes.small
+                                height: width
+                                visible: !tagCover.visible
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Controls.Label {
+                                Layout.fillWidth: true
+                                text: modelData.title || "Плейлист"
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+
+                            Controls.Label {
+                                Layout.fillWidth: true
+                                text: (modelData.trackCount || 0) + " треков"
+                                color: Kirigami.Theme.disabledTextColor
+                            }
+                        }
+                    }
+                }
+            }
+
+            Controls.Label {
+                Layout.fillWidth: true
+                visible: client.tagPlaylists.length === 0
+                text: "Загрузка подборки…"
+                color: Kirigami.Theme.disabledTextColor
+            }
         }
     }
 
@@ -610,6 +1374,9 @@ Kirigami.ApplicationWindow {
         property bool loadingPlaylists: false
         property bool loadingTracks: false
         property int currentKind: 0
+        property int pendingUid: 0
+        property int pendingKind: 0
+        property string pendingTitle: ""
 
         onOpened: {
             showingTracks = false;
@@ -618,6 +1385,14 @@ Kirigami.ApplicationWindow {
             root.playlistFilter = "";
             playlistSearchField.text = "";
             client.loadPlaylists();
+
+            if (pendingKind > 0) {
+                showingTracks = true;
+                loadingTracks = true;
+                currentKind = pendingKind;
+                client.loadPlaylist(pendingUid, pendingKind);
+                pendingKind = 0;
+            }
         }
 
         contentItem: ColumnLayout {
