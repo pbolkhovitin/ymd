@@ -10,5 +10,7 @@ packaging/.shlibdeps/
 # Aurora OS build output
 aurora/build-*/
 aurora/stage/
+aurora/stage-*/
 aurora/.rpm-stage/
+aurora/.rpm-stage-*/
 aurora/output/
