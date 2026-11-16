@@ -1,6 +1,6 @@
 Name: ru.pbolkhovitin.ymd
 Summary: Unofficial Yandex Music client for Aurora OS
-Version: 0.2.0
+Version: 0.2.1
 Release: 1
 License: MIT
 Group: Applications/Multimedia
@@ -49,6 +49,8 @@ chmod 755 %{buildroot}%{_bindir}/%{name}
 /manifest.json
 
 %changelog
+* Tue Nov 17 2026 Leonid Yurasov <leonidy-85@users.noreply.github.com> - 0.2.1-1
+- Automatic rebuild version bump.
 * Tue Nov 17 2026 Leonid Yurasov <leonidy-85@users.noreply.github.com> - 0.2.0-1
 - Bump version for Aurora package update.
 * Mon Nov 16 2026 Leonid Yurasov <leonidy-85@users.noreply.github.com> - 0.1.0-1

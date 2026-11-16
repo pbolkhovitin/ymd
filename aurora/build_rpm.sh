@@ -8,7 +8,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 NAME=ru.pbolkhovitin.ymd
-VERSION=0.2.0
+# Every rebuild gets a new patch version (spec + main.cpp are updated).
+VERSION=$(sh "$ROOT/bump_version.sh")
 IMAGE=aurora-build-tools-leo:5.2.1.200
 SDK_TOOLS=${AURORA_SDK_TOOLS:-$HOME/AuroraOS/sdk/5.2.1.200/tools}
 OUT=$ROOT/output/aurora-rpm
