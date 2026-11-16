@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     app->setOrganizationName(QStringLiteral("ru.pbolkhovitin"));
     app->setApplicationName(QStringLiteral("ymd"));
     app->setApplicationDisplayName(QStringLiteral("ymd"));
-    app->setApplicationVersion(QStringLiteral("0.1.0"));
+    app->setApplicationVersion(QStringLiteral("0.2.0"));
 
     QString dataDir = Aurora::Application::filesDir(false).absolutePath();
     QDir().mkpath(dataDir);
