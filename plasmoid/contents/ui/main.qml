@@ -20,6 +20,18 @@ PlasmoidItem {
     property var playlists: []
     property var playlistTracks: []
     property string playlistTitle: ""
+    property var homeBlocks: []
+    property var metatagGroups: []
+    property var genres: []
+    property var favorites: []
+    property string tagTitle: ""
+    property var tagPlaylists: []
+    property string tagStation: ""
+    property string albumTitle: ""
+    property var albumTracks: []
+    property string lyricsText: ""
+    property var lyricsLines: []
+    property string lyricsError: ""
 
     readonly property var track: state.track || null
     readonly property string title: track ? (track.title || "") : ""
@@ -63,8 +75,14 @@ PlasmoidItem {
                 try {
                     var data = JSON.parse(xhr.responseText);
                     if (data.rev !== lastRev) {
+                        var previousId = track ? track.id : "";
                         state = data;
                         lastRev = data.rev;
+                        if ((data.track ? data.track.id : "") !== previousId) {
+                            lyricsText = "";
+                            lyricsLines = [];
+                            lyricsError = "";
+                        }
                     }
                     lastError = "";
                     keyRetried = false;
@@ -210,6 +228,132 @@ PlasmoidItem {
         xhr.send();
     }
 
+    function getJson(path, onSuccess, onError) {
+        if (!sessionKey) {
+            if (onError) onError("Нет ключа демона");
+            return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", baseUrl() + path);
+        xhr.setRequestHeader("X-YMD-Session", sessionKey);
+        xhr.timeout = 8000;
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            if (xhr.status === 200) {
+                try {
+                    onSuccess(JSON.parse(xhr.responseText));
+                } catch (e) {
+                    lastError = "Некорректный ответ демона";
+                    if (onError) onError(lastError);
+                }
+            } else if (xhr.status === 401) {
+                keyRetried = true;
+                sessionKey = "";
+                keyReady = false;
+                requestKey();
+                if (onError) onError("Нет доступа к демону");
+            } else {
+                lastError = "Запрос не выполнен (HTTP " + xhr.status + ")";
+                if (onError) onError(lastError);
+            }
+        };
+        xhr.ontimeout = function() {
+            lastError = "Демон не отвечает";
+            if (onError) onError(lastError);
+        };
+        xhr.send();
+    }
+
+    function loadHome() {
+        getJson("/v1/home", function(data) {
+            homeBlocks = data.blocks || [];
+        });
+    }
+
+    function loadMetatags() {
+        getJson("/v1/discovery/metatags", function(data) {
+            metatagGroups = data.groups || [];
+        });
+    }
+
+    function loadGenres() {
+        getJson("/v1/discovery/genres", function(data) {
+            genres = data.genres || [];
+        });
+    }
+
+    function loadFavorites() {
+        getJson("/v1/favorites", function(data) {
+            favorites = data.tracks || [];
+        });
+    }
+
+    function loadTag(tag) {
+        tagTitle = tag;
+        tagPlaylists = [];
+        tagStation = "";
+        getJson("/v1/discovery/tag?tag=" + encodeURIComponent(tag), function(data) {
+            tagTitle = data.title || tag;
+            tagStation = data.station || "";
+            tagPlaylists = data.playlists || [];
+        });
+    }
+
+    function loadAlbum(id) {
+        albumTitle = "";
+        albumTracks = [];
+        getJson("/v1/album?id=" + encodeURIComponent(id), function(data) {
+            albumTitle = (data.album && data.album.title) || "Альбом";
+            albumTracks = data.tracks || [];
+        });
+    }
+
+    function startStation(station) {
+        if (!station) return;
+        cmd("station_start", { station: station });
+    }
+
+    function loadLyrics() {
+        if (!track || !track.id) return;
+        lyricsText = "";
+        lyricsLines = [];
+        lyricsError = "";
+        getJson("/v1/lyrics?id=" + encodeURIComponent(track.id) + "&format=lrc", function(data) {
+            lyricsText = data.text || "";
+            lyricsLines = parseLyrics(lyricsText);
+            lyricsError = lyricsText ? "" : "Текст не найден";
+        }, function(message) {
+            lyricsText = "";
+            lyricsLines = [];
+            lyricsError = message || "Не удалось загрузить текст";
+        });
+    }
+
+    function parseLyrics(text) {
+        var lines = [];
+        var rows = String(text || "").split(/\r?\n/);
+        for (var i = 0; i < rows.length; i++) {
+            var match = rows[i].match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/);
+            if (!match) continue;
+            var body = match[3].trim();
+            if (!body) continue;
+            lines.push({
+                time: parseInt(match[1], 10) * 60000 + Math.round(parseFloat(match[2]) * 1000),
+                text: body
+            });
+        }
+        return lines;
+    }
+
+    function lyricIndexAt(pos) {
+        var result = -1;
+        for (var i = 0; i < lyricsLines.length; i++) {
+            if (lyricsLines[i].time <= pos) result = i;
+            else break;
+        }
+        return result;
+    }
+
     function seek(ms) { cmd("seek", { positionMs: Math.round(ms) }); }
     function cycleQuality() { cmd("quality", { value: Format.qualityNext(quality) }); }
 
@@ -252,6 +396,10 @@ PlasmoidItem {
     onExpandedChanged: {
         if (expanded) {
             loadPlaylists();
+            if (homeBlocks.length === 0) loadHome();
+            if (genres.length === 0) loadGenres();
+            if (metatagGroups.length === 0) loadMetatags();
+            if (favorites.length === 0) loadFavorites();
         }
     }
 

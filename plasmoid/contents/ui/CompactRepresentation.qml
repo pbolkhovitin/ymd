@@ -1,66 +1,45 @@
 import QtQuick
 import QtQuick.Layouts
-import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasmoid
-import org.kde.plasma.components as PlasmaComponents3
 import org.kde.kirigami as Kirigami
-import "format.js" as Format
 
 Item {
     id: compact
     property var applet
 
-    implicitWidth: row.implicitWidth + Kirigami.Units.smallSpacing * 2
-    implicitHeight: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.smallSpacing * 2
+    implicitWidth: 28
+    implicitHeight: 28
+    Layout.preferredWidth: implicitWidth
+    Layout.preferredHeight: implicitHeight
 
-    Rectangle {
-        anchors.fill: parent
-        radius: Kirigami.Units.smallSpacing
-        color: Qt.rgba(Kirigami.Theme.backgroundColor.r,
-                       Kirigami.Theme.backgroundColor.g,
-                       Kirigami.Theme.backgroundColor.b,
-                       0.45)
-        border.width: 1
-        border.color: Qt.rgba(Kirigami.Theme.textColor.r,
-                              Kirigami.Theme.textColor.g,
-                              Kirigami.Theme.textColor.b,
-                              0.35)
-    }
-
-    RowLayout {
-        id: row
+    Kirigami.Icon {
         anchors.centerIn: parent
-        spacing: Kirigami.Units.smallSpacing
-
-        Kirigami.Icon {
-            source: "audio-x-generic"
-            implicitWidth: Kirigami.Units.iconSizes.smallMedium
-            implicitHeight: Kirigami.Units.iconSizes.smallMedium
-        }
-
-        PlasmaComponents3.Label {
-            visible: Plasmoid.formFactor !== PlasmaCore.Types.Vertical
-            text: applet.title
-                ? Format.truncate(applet.title + (applet.artistLine ? " — " + applet.artistLine : ""), 34)
-                : (applet.keyReady ? "" : "ymd")
-            color: Kirigami.Theme.textColor
-            elide: Text.ElideRight
-        }
+        width: Kirigami.Units.iconSizes.smallMedium
+        height: Kirigami.Units.iconSizes.smallMedium
+        source: "audio-x-generic"
+        isMask: true
+        color: Kirigami.Theme.textColor
+        active: mouse.containsMouse
     }
 
     MouseArea {
+        id: mouse
         anchors.fill: parent
+        hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-        onClicked: function(mouse) {
-            if (mouse.button === Qt.LeftButton) {
+
+        onClicked: function(event) {
+            if (event.button === Qt.LeftButton) {
                 Plasmoid.expanded = !Plasmoid.expanded;
-            } else if (mouse.button === Qt.MiddleButton) {
+            } else {
                 applet.cmd("toggle");
             }
         }
-        onWheel: function(wheel) {
-            if (wheel.angleDelta.y !== 0) {
-                applet.cmd(wheel.angleDelta.y > 0 ? "prev" : "next");
+
+        onWheel: function(event) {
+            if (event.angleDelta.y !== 0) {
+                applet.cmd(event.angleDelta.y > 0 ? "prev" : "next");
+                event.accepted = true;
             }
         }
     }
