@@ -24,12 +24,14 @@ qt_add_qml_module(ymd-qt
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/TransportButton.qml
         qml/TrackRow.qml
     RESOURCES
         qml/format.js
 )
 
 target_include_directories(ymd-qt PRIVATE src)
+target_compile_definitions(ymd-qt PRIVATE YMD_QT_VERSION="${PROJECT_VERSION}")
 target_link_libraries(ymd-qt PRIVATE
     Qt6::Core
     Qt6::Network
