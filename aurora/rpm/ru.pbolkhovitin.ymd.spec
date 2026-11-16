@@ -33,6 +33,9 @@ Unofficial Yandex Music client for Aurora OS.
 mkdir -p %{buildroot}
 cp -a usr %{buildroot}/
 install -Dpm0644 manifest.json %{buildroot}/manifest.json
+# Aurora validation rejects executable desktop/icons/QML; only the binary is executable.
+find %{buildroot} -type f -exec chmod 644 {} +
+chmod 755 %{buildroot}%{_bindir}/%{name}
 
 %files
 %defattr(-,root,root,-)
