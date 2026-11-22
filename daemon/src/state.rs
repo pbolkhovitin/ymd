@@ -18,7 +18,12 @@ pub const CHANNEL_CAPACITY: usize = 64;
 /// Сколько раз подряд перезапускаем поток, прежде чем взять следующий трек.
 const MAX_RECOVERIES: u32 = 2;
 /// Тиков без движения позиции (1 Гц), после которых поток считается вставшим.
-const STALL_TICKS: u32 = 10;
+/// Четыре тика — это ~4 с тишины: дальше слушатель уже замечает обрыв.
+const STALL_TICKS: u32 = 4;
+/// Насколько позиция должна уйти за длительность, чтобы считать трек
+/// закончившимся: метаданные Яндекса бывают короче реального файла,
+/// поэтому жёсткое сравнение обрезало треки раньше времени.
+const OVERRUN_SLACK_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1594,6 +1599,25 @@ impl AppState {
         self.stall.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// Длительность текущего трека: сначала спрашиваем плеер, он знает
+    /// реальный файл, и только потом берём метаданные API.
+    fn playback_duration(&self) -> u64 {
+        self.player
+            .as_ref()
+            .map(|player| player.duration_ms())
+            .filter(|value| *value > 0)
+            .or_else(|| {
+                self.inner.read().ok().and_then(|state| {
+                    state
+                        .track
+                        .as_ref()
+                        .map(|track| track.duration_ms)
+                        .filter(|value| *value > 0)
+                })
+            })
+            .unwrap_or(0)
+    }
+
     /// Возвращает поток на место обрыва. `seek_simple` до preroll
     /// отклоняется, поэтому попытки повторяются из тикера.
     fn apply_pending_seek(&self, position_ms: u64) {
@@ -1859,18 +1883,14 @@ impl AppState {
                     // Страховка: seek по устаревшей длительности уводит поток за
                     // конец, EOS не приходит и позиция замирает — считаем это
                     // концом трека, иначе очередь встаёт навсегда.
-                    let overrun = app
-                        .snapshot()
-                        .track
-                        .as_ref()
-                        .map(|track| track.duration_ms > 0 && position > track.duration_ms)
-                        .unwrap_or(false);
-                    if overrun {
+                    let duration = app.playback_duration();
+                    if is_overrun(position, duration) {
                         // Один тик после смены трека плеер ещё отдаёт позицию
                         // прошлого потока — иначе проскочим пол-очереди.
                         if !app.end_guard.swap(true, Ordering::SeqCst) {
                             tracing::warn!(
                                 position_ms = position,
+                                duration_ms = duration,
                                 "player position past duration, advancing"
                             );
                             if let Err(err) = app.command_async("advance", None).await {
@@ -1892,6 +1912,25 @@ impl AppState {
                             .map(|player| player.is_playing() && !player.is_buffering())
                             .unwrap_or(false);
                     if stalled {
+                        // Без этих полей в логе не отличить сетевой столл от
+                        // зависшего sink: статус playing, позиция стоит,
+                        // ошибок на шине нет.
+                        tracing::warn!(
+                            position_ms = position,
+                            duration_ms = app.playback_duration(),
+                            quiet_ticks = streak,
+                            buffering = app
+                                .player
+                                .as_ref()
+                                .map(|player| player.is_buffering())
+                                .unwrap_or(false),
+                            state = app
+                                .player
+                                .as_ref()
+                                .map(|player| player.debug_state())
+                                .unwrap_or_default(),
+                            "player: позиция не двигается"
+                        );
                         app.stall.store(0, Ordering::SeqCst);
                         app.recover_after_error("позиция не двигается", position)
                             .await;
@@ -1935,6 +1974,13 @@ impl Default for AppState {
 /// начале и не в конце: в начале перемотка бессмысленна, в конце — уже поздно.
 fn should_resume(position_ms: u64, duration_ms: u64) -> bool {
     position_ms > 2000 && (duration_ms == 0 || position_ms + 2000 < duration_ms)
+}
+
+/// Позиция ушла за конец трека. Допуск нужен из-за расхождения между
+/// длительностью в метаданных и реальным файлом: без него трек
+/// переключался на последних секундах.
+fn is_overrun(position_ms: u64, duration_ms: u64) -> bool {
+    duration_ms > 0 && position_ms > duration_ms.saturating_add(OVERRUN_SLACK_MS)
 }
 
 /// Завершает запись о скачивании и обновляет флаги `cached`.
@@ -2472,6 +2518,16 @@ mod tests {
         let track = track_from_value(&value).unwrap();
         assert_eq!(track.album_id.as_deref(), Some("42"));
         assert!(track.liked);
+    }
+
+    #[test]
+    fn overrun_needs_slack_over_duration() {
+        // Метаданные могут быть короче файла: до +5 с трек не переключаем.
+        assert!(!is_overrun(184_440, 184_440));
+        assert!(!is_overrun(189_000, 184_440));
+        assert!(is_overrun(189_600, 184_440));
+        // Длительность неизвестна — это не переполнение, а обычный тик.
+        assert!(!is_overrun(500_000, 0));
     }
 
     #[test]
