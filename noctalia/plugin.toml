@@ -1,6 +1,6 @@
 id = "pbolkhovitin/yandex-music"
 name = "ymd"
-version = "0.4.1"
+version = "0.4.2"
 plugin_api = 35
 author = "pbolkhovitin"
 license = "MIT"
