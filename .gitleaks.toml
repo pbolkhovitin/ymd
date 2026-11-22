@@ -1,0 +1,15 @@
+# Публичные константы клиентских приложений Яндекс Музыки.
+#
+# `aurora/src/backend.cpp` (ветка feat/aurora-port, в main файла нет) повторяет
+# client_id/client_secret Android-приложения и ключ подписи. Это не секреты
+# пользователя: те же значения опубликованы в открытой библиотеке
+# MarshalX/yandex-music-api и разобраны у нас в
+# notes/reference-yandex-music-api.md. Пользовательские токены живут только
+# в keyring и в репозиторий не попадают.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Публичные client_id/secret и ключ подписи из библиотеки MarshalX"
+paths = ['''aurora/src/backend\.cpp''']
