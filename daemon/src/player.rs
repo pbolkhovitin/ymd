@@ -13,6 +13,19 @@ use std::sync::Mutex;
 use gstreamer as gst;
 use gstreamer::prelude::*;
 
+/// Что шина GStreamer отдала за текущий тик.
+///
+/// Ошибку нельзя проглатывать: после неё пайплайн стоит, позиция замирает,
+/// а состояние остаётся «playing» — снаружи это выглядит как «звук пропал,
+/// кнопки не помогают». Решение (перезапуск или следующий трек) принимает
+/// `state`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BusEvent {
+    None,
+    Eos,
+    Error(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PlayerError {
     #[error("gstreamer init: {0}")]
@@ -207,15 +220,16 @@ impl Player {
         format!("result={result:?} current={current:?} pending={pending:?} position={position}")
     }
 
-    /// Забирает сообщения шины и сообщает, дошло ли до конца потока.
-    pub fn poll_eos(&self) -> bool {
+    /// Забирает сообщения шины: конец потока, ошибка или ничего.
+    pub fn poll_events(&self) -> BusEvent {
         let Ok(playbin) = self.playbin.lock() else {
-            return false;
+            return BusEvent::None;
         };
         let Some(bus) = playbin.bus() else {
-            return false;
+            return BusEvent::None;
         };
 
+        let mut error: Option<String> = None;
         while let Some(message) = bus.timed_pop(gst::ClockTime::ZERO) {
             match message.view() {
                 gst::MessageView::Eos(..) => {
@@ -228,12 +242,34 @@ impl Player {
                         err.error(),
                         err.debug().unwrap_or_default()
                     );
+                    error = Some(err.error().to_string());
                 }
                 _ => {}
             }
         }
 
-        self.take_eos()
+        if self.take_eos() {
+            BusEvent::Eos
+        } else if let Some(error) = error {
+            BusEvent::Error(error)
+        } else {
+            BusEvent::None
+        }
+    }
+
+    /// Перемотка, которую можно повторять: до preroll `seek_simple` честно
+    /// возвращает ошибку, и раньше это молча терялось — поток продолжался
+    /// с нуля вместо места обрыва.
+    pub fn try_seek(&self, position_ms: u64) -> bool {
+        let Ok(playbin) = self.playbin.lock() else {
+            return false;
+        };
+        playbin
+            .seek_simple(
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                gst::ClockTime::from_mseconds(position_ms),
+            )
+            .is_ok()
     }
 
     fn set_eos(&self, value: bool) {

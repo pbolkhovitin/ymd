@@ -5,7 +5,7 @@
 //! резервный, пока локальный плеер не взял управление.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -14,6 +14,11 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 pub const CHANNEL_CAPACITY: usize = 64;
+
+/// Сколько раз подряд перезапускаем поток, прежде чем взять следующий трек.
+const MAX_RECOVERIES: u32 = 2;
+/// Тиков без движения позиции (1 Гц), после которых поток считается вставшим.
+const STALL_TICKS: u32 = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,6 +317,16 @@ pub struct AppState {
     /// Защита от повторного `advance` по целиком устаревшей позиции:
     /// после смены трека GStreamer ещё тик отдаёт позицию прошлого потока.
     end_guard: Arc<AtomicBool>,
+    /// Сколько перезапусков потока уже было на текущем треке.
+    recoveries: Arc<AtomicU32>,
+    /// Подряд идущие тики без движения позиции.
+    stall: Arc<AtomicU32>,
+    /// Позиция предыдущего тика — для детектора зависания.
+    last_pos: Arc<AtomicU64>,
+    /// Позиция, на которую надо вернуться после перезапуска потока.
+    pending_seek: Arc<AtomicU64>,
+    /// Сколько тиков уже пытались выполнить `pending_seek`.
+    seek_attempts: Arc<AtomicU32>,
     /// Защита от параллельных догрузок «Моей волны».
     wave_pending: Arc<AtomicBool>,
     /// Треки, ждущие последовательной загрузки.
@@ -334,6 +349,11 @@ impl AppState {
             local: Arc::new(AtomicBool::new(false)),
             owned: Arc::new(AtomicBool::new(false)),
             end_guard: Arc::new(AtomicBool::new(false)),
+            recoveries: Arc::new(AtomicU32::new(0)),
+            stall: Arc::new(AtomicU32::new(0)),
+            last_pos: Arc::new(AtomicU64::new(0)),
+            pending_seek: Arc::new(AtomicU64::new(0)),
+            seek_attempts: Arc::new(AtomicU32::new(0)),
             wave_pending: Arc::new(AtomicBool::new(false)),
             download_queue: Arc::new(Mutex::new(VecDeque::new())),
             download_worker: Arc::new(AtomicBool::new(false)),
@@ -724,6 +744,7 @@ impl AppState {
                             Ok(()) => {
                                 self.local.store(true, Ordering::Relaxed);
                                 self.owned.store(true, Ordering::Relaxed);
+                                self.reset_playback_guards();
                                 st.status = "playing".to_string();
                             }
                             Err(err) => tracing::warn!("player load: {err}"),
@@ -1552,6 +1573,139 @@ impl AppState {
         next.rev
     }
 
+    /// Сбрасывает счётчики восстановления при смене трека: лимит
+    /// перезапусков считается на трек, а не на всю сессию.
+    fn reset_playback_guards(&self) {
+        self.recoveries.store(0, Ordering::SeqCst);
+        self.stall.store(0, Ordering::SeqCst);
+        self.last_pos.store(0, Ordering::SeqCst);
+        self.pending_seek.store(0, Ordering::SeqCst);
+        self.seek_attempts.store(0, Ordering::SeqCst);
+    }
+
+    /// Отмечает позицию тика и возвращает серию тиков без движения.
+    /// Один и тот же вызов питает детектор зависания.
+    fn note_position(&self, position_ms: u64) -> u32 {
+        let previous = self.last_pos.swap(position_ms, Ordering::SeqCst);
+        if position_ms > previous.saturating_add(400) {
+            self.stall.store(0, Ordering::SeqCst);
+            return 0;
+        }
+        self.stall.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Возвращает поток на место обрыва. `seek_simple` до preroll
+    /// отклоняется, поэтому попытки повторяются из тикера.
+    fn apply_pending_seek(&self, position_ms: u64) {
+        let target = self.pending_seek.load(Ordering::SeqCst);
+        if target == 0 {
+            return;
+        }
+        if position_ms.saturating_add(3000) >= target {
+            self.pending_seek.store(0, Ordering::SeqCst);
+            return;
+        }
+        let attempts = self.seek_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempts > 8 {
+            tracing::warn!(
+                target_ms = target,
+                position_ms,
+                "player: не удалось вернуться на место обрыва"
+            );
+            self.pending_seek.store(0, Ordering::SeqCst);
+            return;
+        }
+        if let Some(player) = &self.player {
+            player.try_seek(target);
+        }
+    }
+
+    /// Перезапускает текущий трек: ошибка источника и застывший поток
+    /// лечатся только свежим подписанным URL. Возвращает поток на ту же
+    /// позицию, если обрыв случился не в начале и не в конце.
+    async fn restart_current(&self, position_ms: u64) -> Result<(), String> {
+        let (id, duration_ms) = {
+            let state = self.snapshot();
+            let track = state
+                .track
+                .ok_or_else(|| "нет текущего трека".to_string())?;
+            (track.id, track.duration_ms)
+        };
+        let resolved = self.resolve_url(&id).await?;
+        let player = self
+            .player
+            .as_ref()
+            .ok_or_else(|| "плеер не создан".to_string())?;
+        player.load(&resolved.url).map_err(|err| err.to_string())?;
+
+        let resume = should_resume(position_ms, duration_ms);
+        self.pending_seek
+            .store(if resume { position_ms } else { 0 }, Ordering::SeqCst);
+        self.seek_attempts.store(0, Ordering::SeqCst);
+        self.stall.store(0, Ordering::SeqCst);
+        self.last_pos.store(position_ms, Ordering::SeqCst);
+        self.local.store(true, Ordering::SeqCst);
+        self.owned.store(true, Ordering::SeqCst);
+        if resume {
+            player.try_seek(position_ms);
+        }
+        if let Ok(mut state) = self.inner.write() {
+            state.status = "playing".to_string();
+            state.position_ms = position_ms;
+            state.quality = resolved.quality;
+            state.codec = Some(resolved.codec);
+            state.bitrate_kbps = resolved.bitrate;
+            state.rev += 1;
+        }
+        tracing::info!(track = %id, position_ms, resume, "player: поток перезапущен");
+        Ok(())
+    }
+
+    /// Реакция на ошибку шины или зависание: до `MAX_RECOVERIES` раз
+    /// перезапускаем поток, дальше берём следующий трек — иначе тишина
+    /// остаётся навсегда и её видно только по замершей позиции.
+    async fn recover_after_error(&self, reason: &str, position_ms: u64) {
+        // Нечего перезапускать: очередь пуста или трек уже снят — глушим
+        // звук, а не крутим пустой «advance» с вечным статусом playing.
+        let Some(current) = self.snapshot().track else {
+            tracing::warn!(reason, "player: нет текущего трека, останавливаю");
+            if let Some(player) = &self.player {
+                player.stop();
+            }
+            self.local.store(false, Ordering::SeqCst);
+            if let Ok(mut state) = self.inner.write() {
+                state.status = "stopped".to_string();
+                state.position_ms = 0;
+                state.rev += 1;
+            }
+            return;
+        };
+        let attempt = self.recoveries.fetch_add(1, Ordering::SeqCst) + 1;
+        let track = current.id;
+        if attempt <= MAX_RECOVERIES {
+            tracing::warn!(
+                track = %track,
+                position_ms,
+                attempt,
+                reason,
+                "player: перезапускаю поток"
+            );
+            if let Err(err) = self.restart_current(position_ms).await {
+                tracing::warn!(track = %track, error = %err, "player: перезапуск не удался");
+                let _ = self.command_async("advance", None).await;
+            }
+        } else {
+            tracing::warn!(
+                track = %track,
+                position_ms,
+                attempt,
+                reason,
+                "player: лимит перезапусков, следующий трек"
+            );
+            let _ = self.command_async("advance", None).await;
+        }
+    }
+
     /// Один тик «плеера» (P0: позиция без звука).
     pub fn tick(&self) {
         let snapshot = {
@@ -1654,35 +1808,54 @@ impl AppState {
                         app.sync_local(0);
                         continue;
                     }
-                    let eos = app
+                    // 1. Шина: конец потока или ошибка источника.
+                    //    Ошибку нельзя оставлять без реакции: пайплайн уже
+                    //    стоит, позиция замирает, а статус остаётся «playing».
+                    let event = app
                         .player
                         .as_ref()
-                        .map(|player| player.poll_eos())
-                        .unwrap_or(false);
-                    if eos {
-                        let before = app.snapshot();
-                        tracing::info!(
-                            track = %before
-                                .track
-                                .as_ref()
-                                .map(|track| track.id.as_str())
-                                .unwrap_or("-"),
-                            index = before.queue.index,
-                            len = before.queue.items.len(),
-                            repeat = %before.queue.repeat,
-                            shuffle = before.queue.shuffle,
-                            "eos -> next"
-                        );
-                        if let Err(err) = app.command_async("advance", None).await {
-                            tracing::warn!("next after eos: {err}");
+                        .map(|player| player.poll_events())
+                        .unwrap_or(crate::player::BusEvent::None);
+                    match event {
+                        crate::player::BusEvent::Eos => {
+                            let before = app.snapshot();
+                            tracing::info!(
+                                track = %before
+                                    .track
+                                    .as_ref()
+                                    .map(|track| track.id.as_str())
+                                    .unwrap_or("-"),
+                                index = before.queue.index,
+                                len = before.queue.items.len(),
+                                repeat = %before.queue.repeat,
+                                shuffle = before.queue.shuffle,
+                                "eos -> next"
+                            );
+                            if let Err(err) = app.command_async("advance", None).await {
+                                tracing::warn!("next after eos: {err}");
+                            }
+                            continue;
                         }
-                        continue;
+                        crate::player::BusEvent::Error(reason) => {
+                            let position = app
+                                .player
+                                .as_ref()
+                                .map(|player| player.position_ms())
+                                .unwrap_or(0);
+                            app.recover_after_error(&reason, position).await;
+                            continue;
+                        }
+                        crate::player::BusEvent::None => {}
                     }
                     let position = app
                         .player
                         .as_ref()
                         .map(|player| player.position_ms())
                         .unwrap_or(0);
+
+                    // 2. Возврат на место обрыва: до preroll seek отклоняется,
+                    //    поэтому пробуем несколько тиков, а не один раз.
+                    app.apply_pending_seek(position);
                     // Страховка: seek по устаревшей длительности уводит поток за
                     // конец, EOS не приходит и позиция замирает — считаем это
                     // концом трека, иначе очередь встаёт навсегда.
@@ -1708,6 +1881,22 @@ impl AppState {
                     }
                     app.end_guard.store(false, Ordering::SeqCst);
                     app.sync_local(position);
+
+                    // 3. Поток мог встать без сообщения об ошибке: позиция не
+                    //    двигается, а элемент всё ещё «playing». Лечится так же.
+                    let streak = app.note_position(position);
+                    let stalled = streak >= STALL_TICKS
+                        && app
+                            .player
+                            .as_ref()
+                            .map(|player| player.is_playing() && !player.is_buffering())
+                            .unwrap_or(false);
+                    if stalled {
+                        app.stall.store(0, Ordering::SeqCst);
+                        app.recover_after_error("позиция не двигается", position)
+                            .await;
+                        continue;
+                    }
 
                     // «Моя волна»: догружаем партию заранее, чтобы не было паузы.
                     if app.wave_active() && app.queue_remaining() <= 1 {
@@ -1740,6 +1929,12 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Возвращает поток на место обрыва только если обрыв случился не в самом
+/// начале и не в конце: в начале перемотка бессмысленна, в конце — уже поздно.
+fn should_resume(position_ms: u64, duration_ms: u64) -> bool {
+    position_ms > 2000 && (duration_ms == 0 || position_ms + 2000 < duration_ms)
 }
 
 /// Завершает запись о скачивании и обновляет флаги `cached`.
@@ -2277,6 +2472,47 @@ mod tests {
         let track = track_from_value(&value).unwrap();
         assert_eq!(track.album_id.as_deref(), Some("42"));
         assert!(track.liked);
+    }
+
+    #[test]
+    fn stall_streak_resets_when_position_moves() {
+        let app = AppState::new();
+        // Первый тик после сброса — это ещё не зависание.
+        assert_eq!(app.note_position(1000), 0);
+        assert_eq!(app.note_position(1000), 1);
+        assert_eq!(app.note_position(2600), 0);
+        assert_eq!(app.note_position(2600), 1);
+    }
+
+    #[test]
+    fn reset_playback_guards_clears_counters() {
+        let app = AppState::new();
+        app.recoveries.store(MAX_RECOVERIES, Ordering::SeqCst);
+        app.stall.store(7, Ordering::SeqCst);
+        app.pending_seek.store(9000, Ordering::SeqCst);
+        app.reset_playback_guards();
+        assert_eq!(app.recoveries.load(Ordering::SeqCst), 0);
+        assert_eq!(app.stall.load(Ordering::SeqCst), 0);
+        assert_eq!(app.pending_seek.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn pending_seek_clears_when_position_reaches_target() {
+        let app = AppState::new();
+        app.pending_seek.store(5000, Ordering::SeqCst);
+        app.apply_pending_seek(3000);
+        assert_eq!(app.pending_seek.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn resume_only_mid_track() {
+        assert!(!should_resume(0, 184_440));
+        assert!(!should_resume(1_500, 184_440));
+        assert!(should_resume(30_000, 184_440));
+        // Длительность неизвестна — доверяем позиции.
+        assert!(should_resume(30_000, 0));
+        // Уже почти конец: перезапуск с перемоткой только продлит тишину.
+        assert!(!should_resume(183_000, 184_440));
     }
 
     #[test]
