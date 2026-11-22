@@ -38,6 +38,8 @@ local s = {
   results = {},
   queue = {},
   loop_mode = "all",
+  plugin_version = nil,
+  daemon_version = nil,
   shuffle = false,
   quality = "lossless",
   codec = nil,
@@ -869,11 +871,52 @@ local function settings_content()
     muted(cache_line(), 11),
   })
 
+  items[#items + 1] = ui.column({ gap = 4 }, {
+    section_title("Версия"),
+    muted("ymd " .. plugin_version() .. " · демон " .. (s.daemon_version or "…"), 11),
+  })
+
   items[#items + 1] = muted(
     "Панель не забирает клавиатуру: управление мышью, медиа-клавиши — через MPRIS.",
     10
   )
   return items
+end
+
+-- Версия плагина — из манифеста рядом с панелью: хардкод разъедется
+-- с plugin.toml при первом же релизе. Демон отдаёт свою версию в /v1/health.
+plugin_version = function()
+  if s.plugin_version then
+    return s.plugin_version
+  end
+  local ok, dir = pcall(noctalia.pluginDir)
+  if not ok or type(dir) ~= "string" then
+    return "?"
+  end
+  local ok_read, text = pcall(noctalia.readFile, dir .. "/plugin.toml")
+  if not ok_read or type(text) ~= "string" then
+    return "?"
+  end
+  s.plugin_version = text:match("version%s*=%s*\"([^\"]+)\"") or "?"
+  return s.plugin_version
+end
+
+local function refresh_versions()
+  noctalia.http({ url = ymd.base .. "/v1/health", method = "GET" }, function(resp)
+    local body = type(resp) == "table" and (resp.body or resp.text or resp.data) or nil
+    local version = "нет связи"
+    if type(body) == "string" then
+      local ok, data = pcall(noctalia.json.decode, body)
+      if ok and type(data) == "table" and data.version then
+        version = tostring(data.version)
+      end
+    end
+    s.daemon_version = version
+    noctalia.log("[settings] демон " .. version .. ", плагин " .. plugin_version())
+    if s.view == "settings" then
+      render()
+    end
+  end)
 end
 
 cache_line = function()
@@ -1463,6 +1506,7 @@ function ym_settings()
     return
   end
   s.view = "settings"
+  refresh_versions()
   render()
   refresh_account()
   refresh_cache()
@@ -1551,6 +1595,7 @@ function onIpc(event, payload)
       open_favorites(true)
     elseif target == "settings" then
       s.view = "settings"
+      refresh_versions()
       render()
       refresh_account()
       refresh_cache()
