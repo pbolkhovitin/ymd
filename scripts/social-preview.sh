@@ -10,7 +10,7 @@ mkdir -p "$tmp"
 
 # 1. Скруглённая панель нужной высоты (кроп — только сама панель, без полосы бара).
 h=430
-magick "$src" -crop 468x370+10+30 +repage -resize "x$h" "$tmp/panel-flat.png"
+magick "$src" -crop 486x405+4+4 +repage -resize "x$h" "$tmp/panel-flat.png"
 w=$(magick identify -format '%w' "$tmp/panel-flat.png")
 magick "$tmp/panel-flat.png" \
   \( +clone -alpha extract -fill black -colorize 100 \

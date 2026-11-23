@@ -147,3 +147,28 @@ noctalia msg plugin 'pbolkhovitin/yandex-music:panel' all refresh
 Для съёмки панели пришлось выключить `shell.panel.open_near_click_session`
 (иначе панель открывается у последнего клика и уводит фокус на другой
 воркспейс) и вернуть настройку после.
+
+## Скриншоты (2026-11-23, eDP-1)
+
+Пересъёмка под 0.4.2: docs/images/noctalia-bar.png, noctalia-panel.png
+и новый noctalia-panel-settings.png.
+
+- Экран — встроенный **eDP-1** (1920×1080, логическая позиция 301,1440),
+  снимали grim -g "301,1440 1920x1080". Внешний DP-3 (3840×2160) в кадр
+  не попадает.
+- Бар: чтобы в кадре был только виджет, временно оставили в раскладке
+  center = ["ym"], start = [], end = [] через
+  noctalia msg config-set bar.default.*. Подпись — label = "title";
+  ключ живёт в секции [widget.ym] файла
+  ~/.local/state/noctalia/settings.toml (через config-set путь
+  plugin_settings.* не принимается: «unknown setting»).
+- Кадр бара — кроп 809,0 → 1112,38, апскейл ×4 → 1212×152.
+- Панель: границы найдены диффом «закрыто/открыто» по порогу 25 —
+  тело (717,42)–(1202,446); кроп с небольшим полем 713,38 → 1207,451
+  → 494×413. Открывали noctalia msg panel-toggle, вид «Настройки» —
+  noctalia msg plugin pbolkhovitin/yandex-music:panel all view settings
+  (для service-style entry обязателен target all).
+- Настройки хоста после съёмки восстановлены из бэкапа settings.toml;
+  проверено, что раскладка бара вернулась к исходной.
+- scripts/social-preview.sh кроит панель по новому размеру
+  (-crop 486x405+4+4), social preview пересобран: v0.4.2.
