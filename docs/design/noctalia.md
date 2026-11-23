@@ -2,9 +2,11 @@
 
 ## Как это выглядит
 
-Снято на Fedora 44 / niri 26.04 / Noctalia v5.4.1, тема Dracula, поток FLAC.
+Снято на Fedora 44 / niri 26.04 / Noctalia v5.6.0, экран eDP-1 (1920×1080),
+палитра Kanagawa Paper, поток AAC 256.
 
-Бар: значок действия и «трек — артист» в одной капсуле с остальными виджетами.
+Бар: значок состояния и подпись — по умолчанию `ymd`, настройка виджета `label`
+переключает её на «трек — артист».
 
 ![Виджет в баре](../images/noctalia-bar.png)
 
@@ -12,34 +14,58 @@
 
 ![Панель](../images/noctalia-panel.png)
 
+Настройки: аккаунт, качество, кэш и версии плагина с демоном.
+
+![Настройки панели](../images/noctalia-panel-settings.png)
+
 ## Манифест
 
 Фактический `noctalia/plugin.toml`:
 
 ~~~toml
 id = "pbolkhovitin/yandex-music"
-name = "Yandex Music"
-version = "0.2.1"
+name = "ymd"
+version = "0.4.2"
 plugin_api = 35
 author = "pbolkhovitin"
 license = "MIT"
 icon = "music"
-description = "Яндекс Музыка в баре и панели Noctalia через демон ymd."
+description = "Неофициальный клиент Яндекс Музыки: бар-виджет и панель Noctalia через демон ymd."
 tags = ["music", "media", "yandex"]
 
+# Бар-виджет: иконка + подпись, клики и колесо.
+# `label` выбирает, что писать рядом с иконкой: название трека или имя приложения.
 [[widget]]
 id = "bar"
 entry = "widget.luau"
 hover_highlight = false
 
+  [[widget.setting]]
+  key = "label"
+  type = "select"
+  label_key = "settings.label.label"
+  description_key = "settings.label.description"
+  default = "app"
+
+   [[widget.setting.options]]
+   value = "app"
+   label_key = "settings.label.options.app"
+
+   [[widget.setting.options]]
+   value = "title"
+   label_key = "settings.label.options.title"
+
+# Диагностический виджет: печатает реальные имена методов barWidget.*/ui.*/noctalia.*
 [[widget]]
-id = "probe"          # диагностика: печатает методы barWidget/ui/noctalia
+id = "probe"
 entry = "probe.luau"
 
+# Фоновая подписка на SSE.
 [[service]]
-id = "bridge"         # фоновая SSE-подписка
+id = "bridge"
 entry = "bridge.luau"
 
+# Панель плеера: поиск, очередь, транспорт.
 [[panel]]
 id = "panel"
 entry = "panel.luau"
