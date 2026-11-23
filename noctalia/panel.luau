@@ -145,10 +145,22 @@ local function quality_label()
 end
 
 -- Компактная иконка-кнопка: один набор (tabler), один размерный ряд.
+-- Кнопка с явным `selected`: хост применяет prop только когда он есть, поэтому
+-- отсутствие ключа оставляет на переиспользованном узле прошлую заливку.
+local function btn(props)
+  if props.selected == nil then
+    props.selected = false
+  end
+  return ui.button(props)
+end
+
 local function icon_button(glyph, tooltip, action, variant, selected, size)
   -- Одинаковые габариты у всех транспортных кнопок: primary-заливка play
   -- иначе смотрится мельче соседних «призрачных» кнопок без фона.
-  return ui.button({
+  return btn({
+    -- Ключ не даёт хосту переиспользовать узел другой кнопки: при смене
+    -- вида дети без key подбираются только по типу.
+    key = "ib:" .. tostring(action),
     glyph = glyph,
     tooltip = tooltip,
     variant = variant or "ghost",
@@ -156,14 +168,14 @@ local function icon_button(glyph, tooltip, action, variant, selected, size)
     glyphSize = size or 18,
     width = 32,
     height = 32,
-    selected = selected,
+    selected = selected == true,
     onClick = action,
   })
 end
 
 -- Строка списка: текст слева, без «прыгающего» центра.
 local function row_button(text, action, glyph)
-  return ui.button({
+  return btn({
     text = text,
     glyph = glyph,
     variant = "ghost",
@@ -187,7 +199,7 @@ local function muted(text, size)
 end
 
 local function retry_row(action)
-  return ui.button({
+  return btn({
     text = "Повторить",
     glyph = "refresh",
     variant = "secondary",
@@ -241,7 +253,7 @@ local function header()
       fontWeight = "bold",
     }),
     ui.spacer({}),
-    ui.button({
+    btn({
       text = quality_label(),
       variant = "ghost",
       controlSize = "sm",
@@ -355,7 +367,7 @@ local function transport()
       s.shuffle and "Перемешивание включено" or "Перемешивание выключено",
       "ym_shuffle"
     ),
-    ui.button({
+    btn({
       text = "Волна",
       glyph = "wave-sine",
       variant = "ghost",
@@ -363,7 +375,7 @@ local function transport()
       tooltip = "Моя волна",
       onClick = "ym_wave",
     }),
-    ui.button({
+    btn({
       text = s.view == "lyrics" and "К треку" or "Текст",
       variant = "ghost",
       controlSize = "sm",
@@ -385,7 +397,7 @@ local NAV = {
 local function nav()
   local buttons = {}
   for _, item in ipairs(NAV) do
-    buttons[#buttons + 1] = ui.button({
+    buttons[#buttons + 1] = btn({
       text = item.text,
       variant = "ghost",
       controlSize = "sm",
@@ -410,7 +422,7 @@ local function nav()
 end
 
 local function back_row(target)
-  return ui.button({
+  return btn({
     text = "← Назад",
     variant = "ghost",
     controlSize = "sm",
@@ -633,7 +645,7 @@ local function tag_content()
   end
 
   if data.station then
-    items[#items + 1] = ui.button({
+    items[#items + 1] = btn({
       text = "Радио по подборке",
       glyph = "wave-sine",
       variant = "secondary",
@@ -691,7 +703,7 @@ local function list_content()
     items[#items + 1] = muted(short(data.subtitle, 44), 11)
   end
   if #tracks > 0 then
-    items[#items + 1] = ui.button({
+    items[#items + 1] = btn({
       text = "Играть все · " .. #tracks,
       glyph = "player-play",
       variant = "secondary",
@@ -748,7 +760,7 @@ local function auth_content()
       "Вход нужен для главной, избранного и рекомендаций. Демон покажет код, его нужно ввести на странице Яндекса.",
       12
     )
-    items[#items + 1] = ui.button({
+    items[#items + 1] = btn({
       text = "Получить код",
       glyph = "player-play",
       variant = "primary",
@@ -771,7 +783,7 @@ local function auth_content()
     })
     items[#items + 1] = muted("Откройте страницу и введите код. Ожидание подтверждения…", 12)
     items[#items + 1] = ui.row({ gap = 6 }, {
-      ui.button({
+      btn({
         text = "Открыть страницу",
         variant = "secondary",
         controlSize = "sm",
@@ -781,7 +793,7 @@ local function auth_content()
           end
         end,
       }),
-      ui.button({
+      btn({
         text = "Отмена",
         variant = "ghost",
         controlSize = "sm",
@@ -826,7 +838,7 @@ local function settings_content()
         maxLines = 1,
       }),
       ui.spacer({}),
-      ui.button({
+      btn({
         text = "Выйти",
         glyph = "logout",
         variant = "ghost",
@@ -843,7 +855,7 @@ local function settings_content()
     })
   else
     rows[#rows + 1] = muted(s.account_err ~= "" and s.account_err or "Вход не выполнен", 12)
-    rows[#rows + 1] = ui.button({
+    rows[#rows + 1] = btn({
       text = "Войти",
       glyph = "login",
       variant = "secondary",
@@ -860,7 +872,7 @@ local function settings_content()
     section_title("Звук и кэш"),
     ui.row({ gap = 6, align = "center" }, {
       muted("Качество:", 12),
-      ui.button({
+      btn({
         text = quality_label(),
         variant = "ghost",
         controlSize = "sm",
