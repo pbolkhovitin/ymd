@@ -1293,6 +1293,47 @@ impl AppState {
         Some(track)
     }
 
+    /// Качает поток в локальный файл: живое HTTP-соединение даёт замирания.
+    async fn playable_url(&self, track_id: &str, quality: &str, url: String) -> String {
+        if !crate::config::prefetch() || !url.starts_with("http") {
+            return url;
+        }
+        match Self::fetch_stream(track_id, quality, &url).await {
+            Some(path) => {
+                tracing::debug!(track = %track_id, file = %path.display(), "play from prefetched file");
+                format!("file://{}", path.display())
+            }
+            None => {
+                tracing::warn!(track = %track_id, "prefetch failed, streaming directly");
+                url
+            }
+        }
+    }
+
+    async fn fetch_stream(track_id: &str, quality: &str, url: &str) -> Option<std::path::PathBuf> {
+        let dir = dirs::cache_dir()?.join("ymd").join("stream");
+        std::fs::create_dir_all(&dir).ok()?;
+        let target = dir.join(format!("{track_id}-{quality}.stream"));
+        if let Ok(meta) = std::fs::metadata(&target) {
+            if meta.len() > 0 {
+                return Some(target);
+            }
+        }
+        let response = reqwest::Client::new().get(url).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let bytes = response.bytes().await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        let part = dir.join(format!("{track_id}-{quality}.part"));
+        std::fs::write(&part, &bytes).ok()?;
+        std::fs::rename(&part, &target).ok()?;
+        prune_stream_cache(&dir);
+        Some(target)
+    }
+
     async fn resolve_url(&self, track_id: &str) -> Result<ResolvedStream, String> {
         // Офлайн-кэш приоритетнее сети: локальный файл играет без токена и сети.
         if let Some(path) = crate::cache::path_for(track_id) {
@@ -1327,7 +1368,7 @@ impl AppState {
         };
         tracing::info!(track = %track_id, codec = %stream.codec, bitrate = stream.bitrate, "stream resolved");
         Ok(ResolvedStream {
-            url: stream.url,
+            url: self.playable_url(track_id, used.as_str(), stream.url).await,
             quality: used.as_str().to_string(),
             codec: stream.codec,
             // API отдаёт битрейт в бит/с, в состоянии и UI — кбит/с.
@@ -2575,5 +2616,32 @@ mod tests {
     fn unknown_op_is_error() {
         let app = AppState::new();
         assert!(app.command("nope", None).is_err());
+    }
+}
+
+/// Оставляет не больше 30 последних скачанных потоков.
+fn prune_stream_cache(dir: &std::path::Path) {
+    const MAX_FILES: usize = 30;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("stream") {
+                return None;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .collect();
+    if files.len() <= MAX_FILES {
+        return;
+    }
+    files.sort_by_key(|(modified, _)| *modified);
+    let excess = files.len() - MAX_FILES;
+    for (_, path) in files.iter().take(excess) {
+        let _ = std::fs::remove_file(path);
     }
 }

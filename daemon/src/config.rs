@@ -24,6 +24,9 @@ pub struct Playback {
     /// Если запрошенное качество недоступно для трека — пробовать `hq`.
     #[serde(default = "default_true")]
     pub fallback_hq: bool,
+    /// Качать поток в файл перед воспроизведением.
+    #[serde(default = "default_true")]
+    pub prefetch: bool,
 }
 
 impl Default for Playback {
@@ -31,6 +34,7 @@ impl Default for Playback {
         Self {
             quality: default_quality(),
             fallback_hq: true,
+            prefetch: true,
         }
     }
 }
@@ -252,4 +256,9 @@ mod tests {
         assert_eq!(config.cache.limit_mb, 2048);
         assert!(config.playback.fallback_hq);
     }
+}
+
+/// Качать ли поток в файл перед воспроизведением.
+pub fn prefetch() -> bool {
+    load().playback.prefetch
 }

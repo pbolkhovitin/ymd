@@ -131,6 +131,17 @@ GStreamer `playbin3` с **явным `pipewiresink`** — `configure_audio_sink(
 с полями `position_ms`, `duration_ms`, `quiet_ticks`, `buffering` и
 `state` — по ним отличают сетевой столл от зависшего sink.
 
+#### Pre-fetch потока
+
+Плеер получает `file://`, а не http-URL: `state::resolve_url` после
+`api::stream` скачивает поток целиком в
+`~/.cache/ymd/stream/<track>-<quality>.stream` (`[playback] prefetch`,
+по умолчанию включено) и только при ошибке отдаёт исходный URL. Причина —
+живой `souphttpsrc`-поток вставал на 4+ секунды (позиция замирала при
+`Playing` и `buffering=false`), тогда как тот же файл с диска играет без
+обрывов; замеры — `notes/playback-recovery-findings.md`. Каталог ограничен
+30 файлами, самые старые удаляются по mtime.
+
 ### `mpris_server` и `mpris`
 
 `mpris_server.rs` публикует `org.mpris.MediaPlayer2.ymd` и `/Player` через
