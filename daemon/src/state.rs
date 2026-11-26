@@ -1952,6 +1952,16 @@ impl AppState {
                             .as_ref()
                             .map(|player| player.is_playing() && !player.is_buffering())
                             .unwrap_or(false);
+                    // Конец трека: позиция замирает на duration-1, а EOS
+                    // приходит с задержкой. Это не зависание — переходим дальше.
+                    let track_end = app.playback_duration();
+                    if streak >= STALL_TICKS && track_end > 0 && position + 1500 >= track_end {
+                        app.stall.store(0, Ordering::SeqCst);
+                        if let Err(err) = app.command_async("advance", None).await {
+                            tracing::warn!("advance at track end: {err}");
+                        }
+                        continue;
+                    }
                     if stalled {
                         // Без этих полей в логе не отличить сетевой столл от
                         // зависшего sink: статус playing, позиция стоит,
