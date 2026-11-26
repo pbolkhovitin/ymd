@@ -118,7 +118,7 @@ impl Player {
         let fresh = Self::element()?;
         Self::configure_audio_sink(&fresh);
         let volume = self.volume.lock().map(|value| *value).unwrap_or(1.0);
-        fresh.set_property("volume", volume);
+        fresh.set_property("volume", Self::gain(volume));
         fresh.set_property("uri", url);
         fresh.set_state(gst::State::Playing)?;
 
@@ -188,13 +188,22 @@ impl Player {
             .unwrap_or(0)
     }
 
+    /// Перцептивная кривая громкости: положение слайдера -> усиление.
+    ///
+    /// Линейная амплитуда даёт в середине шкалы всего -6 дБ, из-за чего
+    /// слайдер кажется «слабым». Куб даёт -18 дБ в середине и ровный
+    /// ход по всей длине.
+    fn gain(volume: f64) -> f64 {
+        volume.clamp(0.0, 1.0).powi(3)
+    }
+
     pub fn set_volume(&self, volume: f64) {
         let volume = volume.clamp(0.0, 1.0);
         if let Ok(mut guard) = self.volume.lock() {
             *guard = volume;
         }
         if let Ok(playbin) = self.playbin.lock() {
-            playbin.set_property("volume", volume);
+            playbin.set_property("volume", Self::gain(volume));
         }
     }
 
@@ -327,5 +336,18 @@ mod tests {
         // Локальный файл также вызывает source-setup, но TLS-свойств не имеет.
         let file = gst::ElementFactory::make("filesrc").build().unwrap();
         configure_macos_tls(&file, ca_file);
+    }
+}
+
+#[cfg(test)]
+mod volume_curve_tests {
+    use super::Player;
+
+    #[test]
+    fn volume_curve_is_perceptual() {
+        assert!((Player::gain(1.0) - 1.0).abs() < 1e-9);
+        assert!((Player::gain(0.5) - 0.125).abs() < 1e-9);
+        assert!(Player::gain(0.0).abs() < 1e-9);
+        assert!((Player::gain(1.5) - 1.0).abs() < 1e-9);
     }
 }
