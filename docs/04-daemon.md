@@ -68,7 +68,11 @@ HTTP-клиент с заголовками `x-yandex-music-client`, `x-yandex-m
 
 ### `player`
 
-GStreamer `playbin3` с `autoaudiosink` (на KDE это PipeWire). Умеет
+GStreamer `playbin3` с **явным `pipewiresink`** — `configure_audio_sink()`
+вызывается и в `new()`, и в `load()` (каждый трек создаёт свежий `playbin3`);
+переопределяется переменной `YMD_AUDIO_SINK`. `autoaudiosink` не используется:
+на KDE он выбирает `pulsesink` через pulse-шим, и при его зависании трек
+встаёт при живом сокете к CDN. Умеет
 `load/play/pause/toggle/stop`, `seek_ms`, `try_seek`, `position_ms`,
 `duration_ms`, `set_volume`, `poll_events`. Тикер раз в секунду забирает
 позицию и сообщения шины (`Eos`, `Error`, `None`), на EOS переходит
@@ -126,6 +130,17 @@ GStreamer `playbin3` с `autoaudiosink` (на KDE это PipeWire). Умеет
 Перед перезапуском по зависанию пишется `player: позиция не двигается`
 с полями `position_ms`, `duration_ms`, `quiet_ticks`, `buffering` и
 `state` — по ним отличают сетевой столл от зависшего sink.
+
+#### Pre-fetch потока
+
+Плеер получает `file://`, а не http-URL: `state::resolve_url` после
+`api::stream` скачивает поток целиком в
+`~/.cache/ymd/stream/<track>-<quality>.stream` (`[playback] prefetch`,
+по умолчанию включено) и только при ошибке отдаёт исходный URL. Причина —
+живой `souphttpsrc`-поток вставал на 4+ секунды (позиция замирала при
+`Playing` и `buffering=false`), тогда как тот же файл с диска играет без
+обрывов; замеры — `notes/playback-recovery-findings.md`. Каталог ограничен
+30 файлами, самые старые удаляются по mtime.
 
 ### `mpris_server` и `mpris`
 

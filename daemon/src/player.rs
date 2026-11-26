@@ -66,6 +66,21 @@ impl Player {
             .map_err(|_| PlayerError::NoElement)
     }
 
+    /// Явный аудиовыход вместо `autoaudiosink`.
+    ///
+    /// `autoaudiosink` на этой системе выбирал `pulsesink` (через pulse-shim),
+    /// и поток замирал каждые ~55-75 с: `/proc/<pid>/task/*/wchan` показывал
+    /// `futex_do_wait` в `aqueue:src`, а источник через 15 с ловил
+    /// `Socket I/O timed out`. С `pipewiresink` замираний нет (проверено
+    /// 9 и 10 минут подряд). `YMD_AUDIO_SINK` переопределяет элемент.
+    fn configure_audio_sink(playbin: &gst::Element) {
+        let name = std::env::var("YMD_AUDIO_SINK").unwrap_or_else(|_| "pipewiresink".to_string());
+        match gst::ElementFactory::make(&name).build() {
+            Ok(sink) => playbin.set_property("audio-sink", &sink),
+            Err(error) => tracing::debug!("аудиовыход {name} недоступен: {error}; остаётся авто"),
+        }
+    }
+
     pub fn new() -> Result<Self, PlayerError> {
         gst::init()?;
 
@@ -80,6 +95,7 @@ impl Player {
               None
           });
       }
+        Self::configure_audio_sink(&playbin);
         playbin.set_property("volume", 1.0f64);
 
         Ok(Self {
@@ -100,6 +116,7 @@ impl Player {
         }
 
         let fresh = Self::element()?;
+        Self::configure_audio_sink(&fresh);
         let volume = self.volume.lock().map(|value| *value).unwrap_or(1.0);
         fresh.set_property("volume", volume);
         fresh.set_property("uri", url);
