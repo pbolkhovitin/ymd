@@ -8,7 +8,7 @@
     "Id": "io.github.pbolkhovitin.ymd",
     "License": "MIT",
     "Name": "ymd",
-    "Version": "0.4.2",
+    "Version": "0.4.3",
     "Website": "https://github.com/pbolkhovitin/ymd"
   },
   "X-Plasma-API": "declarativeappletscript",
