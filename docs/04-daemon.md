@@ -68,7 +68,11 @@ HTTP-клиент с заголовками `x-yandex-music-client`, `x-yandex-m
 
 ### `player`
 
-GStreamer `playbin3` с `autoaudiosink` (на KDE это PipeWire). Умеет
+GStreamer `playbin3` с **явным `pipewiresink`** — `configure_audio_sink()`
+вызывается и в `new()`, и в `load()` (каждый трек создаёт свежий `playbin3`);
+переопределяется переменной `YMD_AUDIO_SINK`. `autoaudiosink` не используется:
+на KDE он выбирает `pulsesink` через pulse-шим, и при его зависании трек
+встаёт при живом сокете к CDN. Умеет
 `load/play/pause/toggle/stop`, `seek_ms`, `try_seek`, `position_ms`,
 `duration_ms`, `set_volume`, `poll_events`. Тикер раз в секунду забирает
 позицию и сообщения шины (`Eos`, `Error`, `None`), на EOS переходит
